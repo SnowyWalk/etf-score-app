@@ -1,9 +1,10 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import { AlertTriangle, Database, Gauge } from "lucide-react";
+import { useMemo, useState, useTransition } from "react";
+import { AlertTriangle, Database, Gauge, RefreshCw } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import {
   Card,
   CardContent,
@@ -17,6 +18,8 @@ import { buildPortfolioRecommendation } from "@/lib/recommendation";
 import { calculateEtfScores } from "@/lib/scoring";
 import { getStrategyPreset } from "@/lib/strategy-presets";
 import type { EtfRawData, StrategyType } from "@/types/etf";
+import type { EtfMarketSnapshot, MarketDataStatus } from "@/types/market";
+import { BacktestPanel } from "./BacktestPanel";
 import { EtfScoreTable } from "./EtfScoreTable";
 import { EtfSummaryList } from "./EtfSummaryList";
 import { RebalanceNotes } from "./RebalanceNotes";
@@ -25,23 +28,62 @@ import { StrategySelector } from "./StrategySelector";
 
 type EtfDashboardClientProps = {
   etfs?: EtfRawData[];
+  initialSnapshot?: EtfMarketSnapshot;
 };
 
 export function EtfDashboardClient({
   etfs = sampleEtfs,
+  initialSnapshot,
 }: EtfDashboardClientProps) {
   const [strategy, setStrategy] = useState<StrategyType>("balanced");
+  const [snapshot, setSnapshot] = useState<EtfMarketSnapshot | undefined>(
+    initialSnapshot
+  );
+  const [isPending, startTransition] = useTransition();
+  const [refreshError, setRefreshError] = useState<string | undefined>();
   const preset = getStrategyPreset(strategy);
+  const activeEtfs = snapshot?.etfs ?? etfs;
+  const dataStatus =
+    snapshot?.status ??
+    ({
+      provider: "sample",
+      freshness: "sample",
+      asOf: new Date().toISOString(),
+      isFallback: true,
+      warnings: ["Using local sample data."],
+    } satisfies MarketDataStatus);
 
   const scores = useMemo(
-    () => calculateEtfScores(etfs, preset.weights),
-    [etfs, preset.weights]
+    () => calculateEtfScores(activeEtfs, preset.weights),
+    [activeEtfs, preset.weights]
   );
   const recommendation = useMemo(
     () => buildPortfolioRecommendation(scores, strategy),
     [scores, strategy]
   );
   const topScore = scores[0];
+  const isSample = dataStatus.freshness === "sample" || dataStatus.isFallback;
+
+  function refreshMarketData() {
+    setRefreshError(undefined);
+    startTransition(async () => {
+      try {
+        const response = await fetch("/api/market/etfs?refresh=true", {
+          cache: "no-store",
+        });
+
+        if (!response.ok) {
+          throw new Error(`Refresh failed with ${response.status}`);
+        }
+
+        setSnapshot((await response.json()) as EtfMarketSnapshot);
+      } catch (error) {
+        setRefreshError(
+          error instanceof Error ? error.message : "Refresh failed."
+        );
+      }
+    });
+  }
 
   return (
     <main className="min-h-screen bg-background">
@@ -52,9 +94,11 @@ export function EtfDashboardClient({
               <div className="flex flex-wrap items-center gap-2">
                 <Badge variant="outline" className="gap-1">
                   <Database className="size-3" />
-                  Fixed sample data
+                  {dataStatus.provider}
                 </Badge>
-                <Badge variant="secondary">MVP</Badge>
+                <Badge variant={isSample ? "secondary" : "default"}>
+                  {dataStatus.freshness.toUpperCase()}
+                </Badge>
               </div>
               <div>
                 <h1 className="text-3xl font-semibold tracking-normal sm:text-4xl">
@@ -78,9 +122,39 @@ export function EtfDashboardClient({
               <p className="text-sm leading-6">
                 이 앱은 투자 판단 보조 도구이며 투자 자문이 아닙니다. 점수는
                 입력 데이터와 산식에 따라 달라지고, ETF의 과거 성과가 미래
-                수익을 보장하지 않습니다. 현재 화면은 고정 로컬 샘플 데이터만
-                사용합니다.
+                수익을 보장하지 않습니다. 화면의 데이터 출처와 기준 시각을
+                확인한 뒤 참고용으로만 사용하세요.
               </p>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardContent className="flex flex-col gap-3 py-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="space-y-1">
+                <p className="text-sm font-medium">데이터 상태</p>
+                <p className="text-sm text-muted-foreground">
+                  {dataStatus.provider} · {dataStatus.freshness.toUpperCase()} ·{" "}
+                  {new Date(dataStatus.asOf).toLocaleString("ko-KR")}
+                </p>
+                {[...dataStatus.warnings, refreshError]
+                  .filter(Boolean)
+                  .map((warning) => (
+                    <p key={warning} className="text-sm text-amber-700">
+                      {warning}
+                    </p>
+                  ))}
+              </div>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="gap-2"
+                onClick={refreshMarketData}
+                disabled={isPending}
+              >
+                <RefreshCw className="size-4" />
+                {isPending ? "갱신 중" : "데이터 갱신"}
+              </Button>
             </CardContent>
           </Card>
         </header>
@@ -116,12 +190,12 @@ export function EtfDashboardClient({
             <Card>
               <CardHeader>
                 <CardTitle>평가 대상</CardTitle>
-                <CardDescription>고정 샘플 ETF</CardDescription>
+                <CardDescription>현재 데이터 소스 기준</CardDescription>
               </CardHeader>
               <CardContent>
                 <div className="text-3xl font-semibold">{scores.length}</div>
                 <p className="mt-1 text-sm text-muted-foreground">
-                  API 미연동, 로컬 데이터 기준
+                  {isSample ? "샘플 fallback 기준" : "무료 EOD API 기준"}
                 </p>
               </CardContent>
             </Card>
@@ -168,6 +242,11 @@ export function EtfDashboardClient({
           </div>
           <EtfSummaryList scores={scores} />
         </section>
+
+        <BacktestPanel
+          strategy={strategy}
+          symbols={activeEtfs.map((etf) => etf.symbol)}
+        />
 
         <RebalanceNotes />
       </div>

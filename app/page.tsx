@@ -1,6 +1,10 @@
 import { EtfDashboardClient } from "@/components/dashboard/EtfDashboardClient";
-import { sampleEtfs } from "@/data/sample-etfs";
+import { getEtfMarketSnapshot } from "@/lib/market-data/snapshot";
 
-export default function Home() {
-  return <EtfDashboardClient etfs={sampleEtfs} />;
+export const dynamic = "force-dynamic";
+
+export default async function Home() {
+  const snapshot = await getEtfMarketSnapshot();
+
+  return <EtfDashboardClient initialSnapshot={snapshot} />;
 }
