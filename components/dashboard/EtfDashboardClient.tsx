@@ -14,6 +14,7 @@ import {
 } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { sampleEtfs } from "@/data/sample-etfs";
+import { evaluateMarketRegime } from "@/lib/market-regime";
 import { buildPortfolioRecommendation } from "@/lib/recommendation";
 import { calculateEtfScores } from "@/lib/scoring";
 import { getStrategyPreset } from "@/lib/strategy-presets";
@@ -48,6 +49,14 @@ export function EtfDashboardClient({
   const [refreshError, setRefreshError] = useState<string | undefined>();
   const preset = getStrategyPreset(strategy);
   const activeEtfs = snapshot?.etfs ?? etfs;
+  const scorableEtfs = useMemo(
+    () => activeEtfs.filter((etf) => etf.dataQuality.status !== "excluded"),
+    [activeEtfs]
+  );
+  const excludedEtfs = useMemo(
+    () => activeEtfs.filter((etf) => etf.dataQuality.status === "excluded"),
+    [activeEtfs]
+  );
   const dataStatus =
     snapshot?.status ??
     ({
@@ -59,8 +68,8 @@ export function EtfDashboardClient({
     } satisfies MarketDataStatus);
 
   const scores = useMemo(
-    () => calculateEtfScores(activeEtfs, preset.weights),
-    [activeEtfs, preset.weights]
+    () => calculateEtfScores(scorableEtfs, preset.weights),
+    [scorableEtfs, preset.weights]
   );
   const visibleScores = useMemo(
     () => scores.slice(0, TOP_ETF_LIMIT),
@@ -69,6 +78,10 @@ export function EtfDashboardClient({
   const recommendation = useMemo(
     () => buildPortfolioRecommendation(visibleScores, strategy),
     [visibleScores, strategy]
+  );
+  const marketRegime = useMemo(
+    () => evaluateMarketRegime(scores),
+    [scores]
   );
   const topScore = visibleScores[0];
   const isSample = dataStatus.freshness === "sample" || dataStatus.isFallback;
@@ -263,8 +276,13 @@ export function EtfDashboardClient({
                 <p className="mt-1 text-sm text-muted-foreground">
                   {isSample
                     ? "샘플 fallback 기준"
-                    : `후보 ${scores.length}개 중 Top ${visibleScores.length}`}
+                    : `정상 후보 ${scores.length}개 중 Top ${visibleScores.length}`}
                 </p>
+                {excludedEtfs.length > 0 ? (
+                  <p className="mt-1 text-sm text-amber-700">
+                    데이터 품질 제외 {excludedEtfs.length}개
+                  </p>
+                ) : null}
               </CardContent>
             </Card>
             <Card className="sm:col-span-3">
@@ -286,7 +304,10 @@ export function EtfDashboardClient({
               </CardContent>
             </Card>
           </div>
-          <RecommendationPanel recommendation={recommendation} />
+          <RecommendationPanel
+            recommendation={recommendation}
+            marketRegime={marketRegime}
+          />
         </section>
 
         <Separator />
@@ -295,10 +316,29 @@ export function EtfDashboardClient({
           <div>
             <h2 className="text-xl font-semibold">점수 테이블</h2>
             <p className="mt-1 text-sm text-muted-foreground">
-              확장 후보군을 총점 내림차순으로 정렬하고 Top 10만 표시합니다.
+              확장 후보군 안의 상대 점수를 총점 내림차순으로 정렬하고 Top
+              10만 표시합니다.
             </p>
           </div>
           <EtfScoreTable scores={visibleScores} />
+          {excludedEtfs.length > 0 ? (
+            <Card className="border-amber-200 bg-amber-50/70 text-amber-950">
+              <CardContent className="space-y-2 py-3">
+                <p className="text-sm font-medium">점수 산정에서 제외된 ETF</p>
+                <div className="grid gap-2">
+                  {excludedEtfs.map((etf) => (
+                    <div key={etf.symbol} className="text-sm leading-6">
+                      <span className="font-semibold">{etf.symbol}</span>{" "}
+                      <span>{etf.name}</span>
+                      <div>
+                        {etf.dataQuality.reasons.join(" ")}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+          ) : null}
         </section>
 
         <section className="space-y-3">

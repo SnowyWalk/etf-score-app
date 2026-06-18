@@ -10,7 +10,7 @@ export function generateSummary(score: Omit<EtfScore, "summary">): string {
   }
 
   if (score.totalScore >= 80) {
-    return "현재 입력값 기준으로 모멘텀과 상품성이 모두 양호한 핵심 편입 후보입니다.";
+    return "현재 후보군 안에서는 모멘텀과 상품성이 모두 양호한 상대 우위 대상입니다.";
   }
 
   if (score.momentumScore >= 70 && score.stabilityScore < 45) {
@@ -22,12 +22,12 @@ export function generateSummary(score: Omit<EtfScore, "summary">): string {
   }
 
   if (score.totalScore >= 65) {
-    return "여러 항목이 무난한 수준으로, 전략 목표와 기존 보유 비중에 따라 보유 후보로 검토할 수 있습니다.";
+    return "여러 항목이 무난한 수준으로, 전략 목표와 기존 보유 비중에 따라 중립 대상으로 볼 수 있습니다.";
   }
 
   if (score.totalScore >= 50) {
     return "현재 기준에서는 적극 편입보다 관찰 대상으로 두고 추세 개선 여부를 확인하는 편이 적절합니다.";
   }
 
-  return "현재 입력값 기준 점수가 낮아 신규 편입보다는 보류 대상으로 보는 편이 적절합니다.";
+  return "현재 입력값 기준 점수가 낮아 후보군 내 후순위 대상으로 보는 편이 적절합니다.";
 }

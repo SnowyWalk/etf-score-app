@@ -118,6 +118,44 @@ function round(value: number, digits = 2) {
   return Math.round(value * factor) / factor;
 }
 
+function getDataQuality(input: {
+  return6M: number;
+  return12M: number;
+  volatility: number;
+}) {
+  const reasons: string[] = [];
+
+  if (Math.abs(input.return12M) > 150) {
+    reasons.push(
+      `12-month return ${round(input.return12M, 1)}% is outside the normal non-leveraged ETF sanity range.`
+    );
+  }
+
+  if (Math.abs(input.return6M) > 100) {
+    reasons.push(
+      `6-month return ${round(input.return6M, 1)}% is outside the normal non-leveraged ETF sanity range.`
+    );
+  }
+
+  if (input.volatility > 50) {
+    reasons.push(
+      `60-day annualized volatility ${round(input.volatility, 1)}% is unusually high for this ETF universe.`
+    );
+  }
+
+  if (reasons.length > 0) {
+    return {
+      status: "excluded" as const,
+      reasons,
+    };
+  }
+
+  return {
+    status: "ok" as const,
+    reasons,
+  };
+}
+
 export function buildEtfRowsFromCandles(
   candlesBySymbol: CandleMap,
   options: BuildEtfRowsOptions = {}
@@ -126,7 +164,9 @@ export function buildEtfRowsFromCandles(
   const tradedValues = symbols.map((symbol) =>
     averageTradedValue(candlesBySymbol[symbol])
   );
-  const liquidityScores = normalizeDirect(tradedValues);
+  const liquidityScores = normalizeDirect(
+    tradedValues.map((value) => (value > 0 ? Math.log10(value) : 0))
+  );
 
   return symbols.flatMap((symbol, index) => {
     const metadata = getEtfMetadata(symbol);
@@ -138,6 +178,12 @@ export function buildEtfRowsFromCandles(
     if (!metadata || !latest || candles.length < 2) {
       return [];
     }
+
+    const return1M = round(calculateWindowReturn(candles, latest, 1));
+    const return3M = round(calculateWindowReturn(candles, latest, 3));
+    const return6M = round(calculateWindowReturn(candles, latest, 6));
+    const return12M = round(calculateWindowReturn(candles, latest, 12));
+    const volatility = round(calculateVolatility(candles));
 
     return {
       symbol,
@@ -151,12 +197,12 @@ export function buildEtfRowsFromCandles(
         options.returnCurrency ?? latest.currency ?? metadata.listingCurrency,
       category: metadata.category,
       role: metadata.role,
-      return1M: round(calculateWindowReturn(candles, latest, 1)),
-      return3M: round(calculateWindowReturn(candles, latest, 3)),
-      return6M: round(calculateWindowReturn(candles, latest, 6)),
-      return12M: round(calculateWindowReturn(candles, latest, 12)),
+      return1M,
+      return3M,
+      return6M,
+      return12M,
       returnYTD: round(calculateYtdReturn(candles, latest)),
-      volatility: round(calculateVolatility(candles)),
+      volatility,
       expenseRatio: metadata.expenseRatio,
       liquidityScore: round(
         tradedValues[index] > 0
@@ -164,6 +210,11 @@ export function buildEtfRowsFromCandles(
           : metadata.fallbackLiquidityScore
       ),
       diversificationScore: metadata.fallbackDiversificationScore,
+      dataQuality: getDataQuality({
+        return6M,
+        return12M,
+        volatility,
+      }),
     };
   });
 }

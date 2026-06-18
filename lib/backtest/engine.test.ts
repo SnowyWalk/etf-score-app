@@ -61,9 +61,13 @@ describe("runBacktest", () => {
         startDate: "2022-01-03",
         endDate: "2023-12-29",
         rebalanceFrequency: "quarterly",
+        rebalanceMode: "scheduled",
+        driftThresholdPct: 5,
+        returnBasis: "localPrice",
         initialCapital: 10_000,
         transactionCostBps: 5,
         slippageBps: 0,
+        benchmarkSymbol: "SPY",
       },
       provider
     );
@@ -73,5 +77,48 @@ describe("runBacktest", () => {
     expect(result.equityCurve.length).toBeGreaterThan(10);
     expect(result.summary.endValue).toBeGreaterThan(9_000);
     expect(result.summary.maxDrawdown).toBeLessThanOrEqual(0);
+    expect(result.summary.sharpeRatio).toBeGreaterThanOrEqual(0);
+    expect(result.benchmark?.symbol).toBe("SPY");
+  });
+
+  it("can reduce rebalance events with threshold mode", async () => {
+    const scheduled = await runBacktest(
+      {
+        symbols,
+        strategy: "balanced",
+        startDate: "2022-01-03",
+        endDate: "2023-12-29",
+        rebalanceFrequency: "monthly",
+        rebalanceMode: "scheduled",
+        driftThresholdPct: 5,
+        returnBasis: "localPrice",
+        initialCapital: 10_000,
+        transactionCostBps: 5,
+        slippageBps: 0,
+        benchmarkSymbol: "SPY",
+      },
+      provider
+    );
+    const threshold = await runBacktest(
+      {
+        symbols,
+        strategy: "balanced",
+        startDate: "2022-01-03",
+        endDate: "2023-12-29",
+        rebalanceFrequency: "monthly",
+        rebalanceMode: "threshold",
+        driftThresholdPct: 99,
+        returnBasis: "localPrice",
+        initialCapital: 10_000,
+        transactionCostBps: 5,
+        slippageBps: 0,
+        benchmarkSymbol: "SPY",
+      },
+      provider
+    );
+
+    expect(threshold.rebalances.length).toBeLessThanOrEqual(
+      scheduled.rebalances.length
+    );
   });
 });

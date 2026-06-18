@@ -8,12 +8,19 @@ import type {
 } from "../types/etf";
 
 type Direction = "direct" | "inverse";
+type NormalizeOptions = {
+  minScore?: number;
+};
 
 export function clampScore(value: number) {
   return Math.min(100, Math.max(0, value));
 }
 
-export function normalizeValues(values: number[], direction: Direction) {
+export function normalizeValues(
+  values: number[],
+  direction: Direction,
+  options: NormalizeOptions = {}
+) {
   if (values.length === 0) {
     return [];
   }
@@ -25,13 +32,15 @@ export function normalizeValues(values: number[], direction: Direction) {
     return values.map(() => 50);
   }
 
+  const minScore = options.minScore ?? 0;
+
   return values.map((value) => {
     const ratio =
       direction === "direct"
         ? (value - min) / (max - min)
         : (max - value) / (max - min);
 
-    return clampScore(ratio * 100);
+    return clampScore(minScore + ratio * (100 - minScore));
   });
 }
 
@@ -45,25 +54,25 @@ export function calculateMomentumRaw(etf: EtfRawData) {
 }
 
 export function getGrade(totalScore: number): Grade {
-  if (totalScore >= 80) return "A";
+  if (totalScore >= 85) return "A";
   if (totalScore >= 70) return "B";
-  if (totalScore >= 60) return "C";
+  if (totalScore >= 55) return "C";
   return "D";
 }
 
 export function getRecommendation(totalScore: number): Recommendation {
-  if (totalScore >= 75) return "BUY";
-  if (totalScore >= 65) return "HOLD";
-  if (totalScore >= 50) return "WATCH";
-  return "AVOID";
+  if (totalScore >= 85) return "RELATIVE_STRENGTH";
+  if (totalScore >= 70) return "NEUTRAL";
+  if (totalScore >= 55) return "WATCH";
+  return "LAGGARD";
 }
 
 export function getRecommendationLabel(recommendation: Recommendation) {
   const labels: Record<Recommendation, string> = {
-    BUY: "편입 후보",
-    HOLD: "보유 후보",
+    RELATIVE_STRENGTH: "상대 우위",
+    NEUTRAL: "중립",
     WATCH: "관찰",
-    AVOID: "보류",
+    LAGGARD: "후순위",
   };
 
   return labels[recommendation];
@@ -88,26 +97,39 @@ export function calculateEtfScores(
   }
 
   const momentumRaw = etfs.map(calculateMomentumRaw);
-  const momentumScores = normalizeValues(momentumRaw, "direct");
+  const momentumScores = normalizeValues(momentumRaw, "direct", {
+    minScore: 20,
+  });
   const stabilityScores = normalizeValues(
     etfs.map((etf) => etf.volatility),
-    "inverse"
+    "inverse",
+    { minScore: 20 }
   );
   const diversificationScores = normalizeValues(
     etfs.map((etf) => etf.diversificationScore),
-    "direct"
+    "direct",
+    { minScore: 20 }
   );
   const productScores = normalizeValues(
     etfs.map((etf) => etf.liquidityScore),
-    "direct"
+    "direct",
+    { minScore: 20 }
   );
   const costScores = normalizeValues(
     etfs.map((etf) => etf.expenseRatio),
-    "inverse"
+    "inverse",
+    { minScore: 20 }
   );
 
-  const scored = etfs.map((etf, index) => {
-    const partial = {
+  const partialScores = etfs.map((etf, index) => {
+    const rawTotalScore =
+      momentumScores[index] * (weights.momentum / 100) +
+      stabilityScores[index] * (weights.stability / 100) +
+      diversificationScores[index] * (weights.diversification / 100) +
+      productScores[index] * (weights.product / 100) +
+      costScores[index] * (weights.cost / 100);
+
+    return {
       ...etf,
       momentumRaw: momentumRaw[index],
       momentumScore: momentumScores[index],
@@ -115,15 +137,16 @@ export function calculateEtfScores(
       diversificationScore: diversificationScores[index],
       productScore: productScores[index],
       costScore: costScores[index],
+      rawTotalScore,
     };
+  });
+  const calibratedTotalScores = normalizeValues(
+    partialScores.map((score) => score.rawTotalScore),
+    "direct"
+  ).map((score) => 40 + score * 0.5);
 
-    const totalScore =
-      partial.momentumScore * (weights.momentum / 100) +
-      partial.stabilityScore * (weights.stability / 100) +
-      partial.diversificationScore * (weights.diversification / 100) +
-      partial.productScore * (weights.product / 100) +
-      partial.costScore * (weights.cost / 100);
-    const roundedTotal = Math.round(totalScore * 10) / 10;
+  const scored = partialScores.map((partial, index) => {
+    const roundedTotal = Math.round(calibratedTotalScores[index] * 10) / 10;
 
     const baseScore = {
       ...partial,

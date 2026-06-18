@@ -26,10 +26,10 @@ const recommendationVariants: Record<
   Recommendation,
   "default" | "secondary" | "outline" | "destructive"
 > = {
-  BUY: "default",
-  HOLD: "secondary",
+  RELATIVE_STRENGTH: "default",
+  NEUTRAL: "secondary",
   WATCH: "outline",
-  AVOID: "destructive",
+  LAGGARD: "destructive",
 };
 
 function ScoreCell({ value }: { value: number }) {
@@ -58,7 +58,7 @@ export function EtfScoreTable({ scores }: EtfScoreTableProps) {
             <TableHead className="text-right">Cost</TableHead>
             <TableHead className="text-right">Total</TableHead>
             <TableHead>Grade</TableHead>
-            <TableHead>Recommendation</TableHead>
+            <TableHead>Relative View</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>

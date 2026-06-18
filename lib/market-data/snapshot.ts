@@ -123,6 +123,13 @@ async function fetchProviderSnapshot(
   const warnings = missingSymbols.map(
     (symbol) => `${symbol} did not have enough candle data for scoring.`
   );
+  const qualityWarnings = etfs
+    .filter((etf) => etf.dataQuality.status === "excluded")
+    .flatMap((etf) =>
+      etf.dataQuality.reasons.map(
+        (reason) => `${etf.symbol} excluded from scoring: ${reason}`
+      )
+    );
   const metricsAsOf = getLatestCandleDate(normalized.candlesBySymbol);
 
   return {
@@ -132,7 +139,12 @@ async function fetchProviderSnapshot(
       freshness: "eod",
       asOf: metricsAsOf,
       isFallback: false,
-      warnings: [...fetchWarnings, ...normalized.warnings, ...warnings],
+      warnings: [
+        ...fetchWarnings,
+        ...normalized.warnings,
+        ...warnings,
+        ...qualityWarnings,
+      ],
     },
     metricsAsOf,
     returnBasis,

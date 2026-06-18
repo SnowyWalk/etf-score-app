@@ -101,6 +101,46 @@ function calculateTurnover(previous: WeightMap, next: WeightMap) {
   return diff / 2;
 }
 
+function maxWeightDifference(previous: WeightMap, next: WeightMap) {
+  const symbols = new Set([...Object.keys(previous), ...Object.keys(next)]);
+  let maxDiff = 0;
+
+  for (const symbol of symbols) {
+    maxDiff = Math.max(maxDiff, Math.abs((next[symbol] ?? 0) - (previous[symbol] ?? 0)));
+  }
+
+  return maxDiff;
+}
+
+function currentDriftedWeights(input: {
+  activeWeights: WeightMap;
+  activeBasePrices: Record<string, number>;
+  candlesBySymbol: CandleMap;
+  date: string;
+}) {
+  const weightedValues = Object.entries(input.activeWeights).flatMap(
+    ([symbol, weight]): Array<[string, number]> => {
+      const basePrice = input.activeBasePrices[symbol];
+      const currentPrice = priceOnOrBefore(input.candlesBySymbol[symbol] ?? [], input.date);
+
+      if (!basePrice || !currentPrice) {
+        return [];
+      }
+
+      return [[symbol, weight * (currentPrice / basePrice)]];
+    }
+  );
+  const total = weightedValues.reduce((sum, [, value]) => sum + value, 0);
+
+  if (total <= 0) {
+    return input.activeWeights;
+  }
+
+  return Object.fromEntries(
+    weightedValues.map(([symbol, value]) => [symbol, value / total])
+  ) as WeightMap;
+}
+
 function calculateDrawdown(value: number, peak: number) {
   if (peak <= 0) {
     return 0;
@@ -140,16 +180,78 @@ function summarizeCurve(
     (sum, rebalance) => sum + rebalance.turnover,
     0
   );
+  const annualizedVolatility =
+    Math.sqrt(variance) * Math.sqrt(TRADING_DAYS_PER_YEAR) * 100;
+  const cagr = ((endValue / startValue) ** (1 / years) - 1) * 100;
+  const maxDrawdown = Math.min(...equityCurve.map((point) => point.drawdown), 0);
+  const annualizedReturn = mean * TRADING_DAYS_PER_YEAR;
+  const annualizedStd = Math.sqrt(variance) * Math.sqrt(TRADING_DAYS_PER_YEAR);
+  const sharpeRatio = annualizedStd > 0 ? annualizedReturn / annualizedStd : 0;
+  const calmarRatio = maxDrawdown < 0 ? cagr / Math.abs(maxDrawdown) : 0;
 
   return {
     startValue,
     endValue,
     totalReturn: ((endValue / startValue) - 1) * 100,
-    cagr: ((endValue / startValue) ** (1 / years) - 1) * 100,
-    maxDrawdown: Math.min(...equityCurve.map((point) => point.drawdown), 0),
-    annualizedVolatility: Math.sqrt(variance) * Math.sqrt(TRADING_DAYS_PER_YEAR) * 100,
+    cagr,
+    maxDrawdown,
+    annualizedVolatility,
+    sharpeRatio,
+    calmarRatio,
     rebalanceCount: rebalances.length,
     turnover,
+    averageTurnover: rebalances.length > 0 ? turnover / rebalances.length : 0,
+  };
+}
+
+function benchmarkCurve(input: {
+  symbol: string;
+  candles: Candle[];
+  config: BacktestConfig;
+}) {
+  const start = new Date(input.config.startDate).getTime();
+  const end = new Date(input.config.endDate).getTime();
+  const candles = input.candles.filter((candle) => {
+    const time = new Date(candle.date).getTime();
+    return time >= start && time <= end;
+  });
+  const first = candles[0];
+
+  if (!first || candles.length < 2) {
+    return undefined;
+  }
+
+  const basePrice = first.adjustedClose ?? first.close;
+  let peak = input.config.initialCapital;
+
+  const equityCurve = candles.flatMap((candle): BacktestPoint[] => {
+    const currentPrice = candle.adjustedClose ?? candle.close;
+
+    if (!basePrice || !currentPrice) {
+      return [];
+    }
+
+    const portfolioValue = input.config.initialCapital * (currentPrice / basePrice);
+    peak = Math.max(peak, portfolioValue);
+
+    return [
+      {
+        date: dateKey(candle.date),
+        portfolioValue: Math.round(portfolioValue * 100) / 100,
+        drawdown: Math.round(calculateDrawdown(portfolioValue, peak) * 100) / 100,
+      },
+    ];
+  });
+
+  const summary = summarizeCurve(input.config, equityCurve, []);
+
+  return {
+    symbol: input.symbol,
+    totalReturn: summary.totalReturn,
+    cagr: summary.cagr,
+    maxDrawdown: summary.maxDrawdown,
+    annualizedVolatility: summary.annualizedVolatility,
+    sharpeRatio: summary.sharpeRatio,
   };
 }
 
@@ -159,8 +261,11 @@ export async function runBacktest(
 ): Promise<BacktestResult> {
   const warnings: string[] = [];
   const candlesBySymbol: CandleMap = {};
+  const symbolsToFetch = Array.from(
+    new Set([...config.symbols, config.benchmarkSymbol].filter(Boolean))
+  );
 
-  for (const symbol of config.symbols) {
+  for (const symbol of symbolsToFetch) {
     candlesBySymbol[symbol] = await provider.getHistoricalDailyCandles({
       symbol,
       startDate: config.startDate,
@@ -237,15 +342,15 @@ export async function runBacktest(
 
     if (rebalanceSet.has(date)) {
       const trailingBySymbol = Object.fromEntries(
-        Object.entries(normalizedCandlesBySymbol).map(([symbol, candles]) => [
+        config.symbols.map((symbol) => [
           symbol,
-          candlesUntil(candles, date),
+          candlesUntil(normalizedCandlesBySymbol[symbol] ?? [], date),
         ])
       );
       const rows = buildEtfRowsFromCandles(trailingBySymbol, {
         returnBasis: config.returnBasis,
         returnCurrency: config.returnBasis === "krwInvestor" ? "KRW" : "LOCAL",
-      });
+      }).filter((row) => row.dataQuality.status !== "excluded");
 
       if (rows.length > 0) {
         const scores = calculateEtfScores(
@@ -257,31 +362,46 @@ export async function runBacktest(
           config.strategy
         );
         const nextWeights = normalizeAllocations(recommendation.allocations);
-        const turnover = calculateTurnover(previousWeights, nextWeights);
-        const cost = portfolioValue * turnover * costRate;
-
-        portfolioValue -= cost;
-        rebalanceBaseValue = portfolioValue;
-        previousWeights = nextWeights;
-        activeWeights = nextWeights;
-        rebalances.push({
-          date: dateKey(date),
-          allocations: recommendation.allocations,
-          scores,
-          turnover,
-          cost,
+        const driftedWeights = currentDriftedWeights({
+          activeWeights,
+          activeBasePrices,
+          candlesBySymbol: normalizedCandlesBySymbol,
+          date,
         });
-      }
+        const comparisonWeights =
+          Object.keys(driftedWeights).length > 0 ? driftedWeights : previousWeights;
+        const maxDrift = maxWeightDifference(comparisonWeights, nextWeights);
+        const shouldRebalance =
+          rebalances.length === 0 ||
+          config.rebalanceMode === "scheduled" ||
+          maxDrift >= config.driftThresholdPct / 100;
 
-      activeBasePrices = Object.fromEntries(
-        Object.keys(activeWeights).flatMap((symbol) => {
-          const price = priceOnOrBefore(
-            normalizedCandlesBySymbol[symbol] ?? [],
-            date
+        if (shouldRebalance) {
+          const turnover = calculateTurnover(comparisonWeights, nextWeights);
+          const cost = portfolioValue * turnover * costRate;
+
+          portfolioValue -= cost;
+          rebalanceBaseValue = portfolioValue;
+          previousWeights = nextWeights;
+          activeWeights = nextWeights;
+          activeBasePrices = Object.fromEntries(
+            Object.keys(activeWeights).flatMap((symbol) => {
+              const price = priceOnOrBefore(
+                normalizedCandlesBySymbol[symbol] ?? [],
+                date
+              );
+              return price ? [[symbol, price]] : [];
+            })
           );
-          return price ? [[symbol, price]] : [];
-        })
-      );
+          rebalances.push({
+            date: dateKey(date),
+            allocations: recommendation.allocations,
+            scores,
+            turnover,
+            cost,
+          });
+        }
+      }
     }
 
     if (Object.keys(activeWeights).length === 0) {
@@ -313,10 +433,23 @@ export async function runBacktest(
     });
   }
 
+  const summary = summarizeCurve(config, equityCurve, rebalances);
+  const benchmark = benchmarkCurve({
+    symbol: config.benchmarkSymbol,
+    candles: normalizedCandlesBySymbol[config.benchmarkSymbol] ?? [],
+    config,
+  });
+
   return {
     config,
     provider: provider.id,
-    summary: summarizeCurve(config, equityCurve, rebalances),
+    summary,
+    benchmark: benchmark
+      ? {
+          ...benchmark,
+          excessCagr: summary.cagr - benchmark.cagr,
+        }
+      : undefined,
     equityCurve,
     rebalances,
     assumptions: [

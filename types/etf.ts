@@ -6,6 +6,13 @@ export type CurrencyHedge = "hedged" | "unhedged" | "partial" | "unknown";
 
 export type ReturnBasis = "krwInvestor" | "localPrice";
 
+export type DataQualityStatus = "ok" | "warning" | "excluded";
+
+export type DataQuality = {
+  status: DataQualityStatus;
+  reasons: string[];
+};
+
 export type EtfRole =
   | "equityCore"
   | "equityGrowth"
@@ -44,11 +51,26 @@ export type EtfRawData = {
   expenseRatio: number;
   liquidityScore: number;
   diversificationScore: number;
+  dataQuality: DataQuality;
 };
 
 export type Grade = "A" | "B" | "C" | "D";
 
-export type Recommendation = "BUY" | "HOLD" | "WATCH" | "AVOID";
+export type Recommendation =
+  | "RELATIVE_STRENGTH"
+  | "NEUTRAL"
+  | "WATCH"
+  | "LAGGARD";
+
+export type MarketRegimeType = "riskOn" | "neutral" | "riskOff";
+
+export type MarketRegime = {
+  type: MarketRegimeType;
+  label: string;
+  actionLabel: string;
+  score: number;
+  reasons: string[];
+};
 
 export type EtfScore = EtfRawData & {
   momentumRaw: number;
@@ -56,6 +78,7 @@ export type EtfScore = EtfRawData & {
   stabilityScore: number;
   productScore: number;
   costScore: number;
+  rawTotalScore: number;
   totalScore: number;
   grade: Grade;
   recommendation: Recommendation;

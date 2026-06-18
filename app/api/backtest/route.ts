@@ -28,10 +28,14 @@ function normalizeConfig(body: Partial<BacktestConfig>): BacktestConfig {
     endDate,
     rebalanceFrequency:
       body.rebalanceFrequency === "quarterly" ? "quarterly" : "monthly",
+    rebalanceMode:
+      body.rebalanceMode === "threshold" ? "threshold" : "scheduled",
+    driftThresholdPct: toNumber(body.driftThresholdPct, 5),
     returnBasis: body.returnBasis === "localPrice" ? "localPrice" : "krwInvestor",
     initialCapital: toNumber(body.initialCapital, 10_000),
     transactionCostBps: toNumber(body.transactionCostBps, 5),
     slippageBps: toNumber(body.slippageBps, 0),
+    benchmarkSymbol: body.benchmarkSymbol ?? "SPY",
   };
 }
 

@@ -21,6 +21,7 @@ export const sampleEtfs: EtfRawData[] = [
     expenseRatio: 0.2,
     liquidityScore: 96,
     diversificationScore: 62,
+    dataQuality: { status: "ok", reasons: [] },
   },
   {
     symbol: "SPY",
@@ -42,6 +43,7 @@ export const sampleEtfs: EtfRawData[] = [
     expenseRatio: 0.09,
     liquidityScore: 100,
     diversificationScore: 78,
+    dataQuality: { status: "ok", reasons: [] },
   },
   {
     symbol: "XLF",
@@ -63,6 +65,7 @@ export const sampleEtfs: EtfRawData[] = [
     expenseRatio: 0.09,
     liquidityScore: 91,
     diversificationScore: 55,
+    dataQuality: { status: "ok", reasons: [] },
   },
   {
     symbol: "XLV",
@@ -84,6 +87,7 @@ export const sampleEtfs: EtfRawData[] = [
     expenseRatio: 0.09,
     liquidityScore: 89,
     diversificationScore: 66,
+    dataQuality: { status: "ok", reasons: [] },
   },
   {
     symbol: "GLD",
@@ -105,6 +109,7 @@ export const sampleEtfs: EtfRawData[] = [
     expenseRatio: 0.4,
     liquidityScore: 93,
     diversificationScore: 86,
+    dataQuality: { status: "ok", reasons: [] },
   },
   {
     symbol: "TLT",
@@ -126,5 +131,6 @@ export const sampleEtfs: EtfRawData[] = [
     expenseRatio: 0.15,
     liquidityScore: 90,
     diversificationScore: 88,
+    dataQuality: { status: "ok", reasons: [] },
   },
 ];
