@@ -1,8 +1,21 @@
 import { getEtfMetadata } from "../../data/etf-metadata";
-import type { EtfRawData } from "../../types/etf";
+import type { EtfRawData, ReturnBasis } from "../../types/etf";
 import type { Candle } from "../../types/market";
 
 const TRADING_DAYS_PER_YEAR = 252;
+export const USD_KRW_SYMBOL = "KRW=X";
+
+type CandleMap = Record<string, Candle[]>;
+
+type BuildEtfRowsOptions = {
+  returnBasis?: ReturnBasis;
+  returnCurrency?: string;
+};
+
+type NormalizeCandlesOptions = {
+  returnBasis: ReturnBasis;
+  fxCandles?: Candle[];
+};
 
 function toPrice(candle: Candle) {
   return candle.adjustedClose ?? candle.close;
@@ -76,10 +89,10 @@ function calculateVolatility(candles: Candle[], lookback = 60) {
   return Math.sqrt(variance) * Math.sqrt(TRADING_DAYS_PER_YEAR) * 100;
 }
 
-function averageDollarVolume(candles: Candle[], lookback = 20) {
+function averageTradedValue(candles: Candle[], lookback = 20) {
   const slice = candles.slice(-lookback);
   const values = slice
-    .map((candle) => (candle.volume ?? 0) * candle.close)
+    .map((candle) => (candle.volume ?? 0) * toPrice(candle))
     .filter((value) => Number.isFinite(value) && value > 0);
 
   if (values.length === 0) {
@@ -106,13 +119,14 @@ function round(value: number, digits = 2) {
 }
 
 export function buildEtfRowsFromCandles(
-  candlesBySymbol: Record<string, Candle[]>
+  candlesBySymbol: CandleMap,
+  options: BuildEtfRowsOptions = {}
 ): EtfRawData[] {
   const symbols = Object.keys(candlesBySymbol);
-  const dollarVolumes = symbols.map((symbol) =>
-    averageDollarVolume(candlesBySymbol[symbol])
+  const tradedValues = symbols.map((symbol) =>
+    averageTradedValue(candlesBySymbol[symbol])
   );
-  const liquidityScores = normalizeDirect(dollarVolumes);
+  const liquidityScores = normalizeDirect(tradedValues);
 
   return symbols.flatMap((symbol, index) => {
     const metadata = getEtfMetadata(symbol);
@@ -128,6 +142,13 @@ export function buildEtfRowsFromCandles(
     return {
       symbol,
       name: metadata.name,
+      market: metadata.market,
+      listingCurrency: metadata.listingCurrency,
+      baseExposureCurrency: metadata.baseExposureCurrency,
+      currencyHedge: metadata.currencyHedge,
+      returnBasis: options.returnBasis ?? "localPrice",
+      returnCurrency:
+        options.returnCurrency ?? latest.currency ?? metadata.listingCurrency,
       category: metadata.category,
       role: metadata.role,
       return1M: round(calculateWindowReturn(candles, latest, 1)),
@@ -138,13 +159,113 @@ export function buildEtfRowsFromCandles(
       volatility: round(calculateVolatility(candles)),
       expenseRatio: metadata.expenseRatio,
       liquidityScore: round(
-        dollarVolumes[index] > 0
+        tradedValues[index] > 0
           ? liquidityScores[index]
           : metadata.fallbackLiquidityScore
       ),
       diversificationScore: metadata.fallbackDiversificationScore,
     };
   });
+}
+
+export function getDisplayCurrency(returnBasis: ReturnBasis) {
+  return returnBasis === "krwInvestor" ? "KRW" : "LOCAL";
+}
+
+function findFxRateOnOrBefore(fxCandles: Candle[], date: string) {
+  const target = new Date(date).getTime();
+
+  for (let index = fxCandles.length - 1; index >= 0; index -= 1) {
+    if (new Date(fxCandles[index].date).getTime() <= target) {
+      return toPrice(fxCandles[index]);
+    }
+  }
+
+  return undefined;
+}
+
+function convertUsdCandlesToKrw(candles: Candle[], fxCandles: Candle[]) {
+  return candles
+    .map((candle): Candle | undefined => {
+      const fxRate = findFxRateOnOrBefore(fxCandles, candle.date);
+
+      if (!fxRate) {
+        return undefined;
+      }
+
+      return {
+        ...candle,
+        open: candle.open * fxRate,
+        high: candle.high * fxRate,
+        low: candle.low * fxRate,
+        close: candle.close * fxRate,
+        adjustedClose: (candle.adjustedClose ?? candle.close) * fxRate,
+        currency: "KRW",
+        source: `${candle.source}+usd-krw`,
+      } satisfies Candle;
+    })
+    .filter((candle): candle is Candle => Boolean(candle));
+}
+
+export function normalizeCandlesForReturnBasis(
+  candlesBySymbol: CandleMap,
+  options: NormalizeCandlesOptions
+) {
+  const warnings: string[] = [];
+
+  if (options.returnBasis === "localPrice") {
+    const currencies = new Set(
+      Object.values(candlesBySymbol)
+        .map((candles) => candles.at(-1)?.currency)
+        .filter(Boolean)
+    );
+
+    if (currencies.size > 1) {
+      warnings.push(
+        "Local price mode compares each ETF in its own listing currency; mixed USD/KRW rows are not FX-normalized."
+      );
+    }
+
+    return {
+      candlesBySymbol,
+      displayCurrency: getDisplayCurrency(options.returnBasis),
+      warnings,
+    };
+  }
+
+  const fxCandles = [...(options.fxCandles ?? [])].sort(
+    (a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()
+  );
+  const normalized: CandleMap = {};
+
+  for (const [symbol, candles] of Object.entries(candlesBySymbol)) {
+    const metadata = getEtfMetadata(symbol);
+    const listingCurrency =
+      metadata?.listingCurrency ?? candles.at(-1)?.currency ?? "USD";
+
+    if (listingCurrency === "USD") {
+      if (fxCandles.length === 0) {
+        warnings.push(
+          `${symbol} is USD-listed but no USD/KRW FX candles were available; local USD prices were used.`
+        );
+        normalized[symbol] = candles;
+      } else {
+        normalized[symbol] = convertUsdCandlesToKrw(candles, fxCandles);
+      }
+      continue;
+    }
+
+    normalized[symbol] = candles.map((candle) => ({
+      ...candle,
+      currency: listingCurrency,
+    }));
+  }
+
+  return {
+    candlesBySymbol: normalized,
+    displayCurrency: getDisplayCurrency(options.returnBasis),
+    warnings,
+  };
 }
 
 export function getLatestCandleDate(candlesBySymbol: Record<string, Candle[]>) {

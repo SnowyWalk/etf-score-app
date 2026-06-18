@@ -17,11 +17,13 @@ import type {
   BacktestResult,
   RebalanceFrequency,
 } from "@/types/backtest";
-import type { StrategyType } from "@/types/etf";
+import type { ReturnBasis, StrategyType } from "@/types/etf";
 
 type BacktestPanelProps = {
   strategy: StrategyType;
   symbols: string[];
+  returnBasis: ReturnBasis;
+  displayCurrency: string;
 };
 
 function defaultStartDate() {
@@ -34,15 +36,20 @@ function formatPercent(value: number) {
   return `${value.toFixed(1)}%`;
 }
 
-function formatCurrency(value: number) {
+function formatCurrency(value: number, currency: string) {
   return new Intl.NumberFormat("en-US", {
     style: "currency",
-    currency: "USD",
+    currency: currency === "KRW" ? "KRW" : "USD",
     maximumFractionDigits: 0,
   }).format(value);
 }
 
-export function BacktestPanel({ strategy, symbols }: BacktestPanelProps) {
+export function BacktestPanel({
+  strategy,
+  symbols,
+  returnBasis,
+  displayCurrency,
+}: BacktestPanelProps) {
   const [startDate, setStartDate] = useState(defaultStartDate);
   const [endDate, setEndDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [frequency, setFrequency] = useState<RebalanceFrequency>("monthly");
@@ -56,11 +63,12 @@ export function BacktestPanel({ strategy, symbols }: BacktestPanelProps) {
       startDate,
       endDate,
       rebalanceFrequency: frequency,
-      initialCapital: 10_000,
+      returnBasis,
+      initialCapital: returnBasis === "krwInvestor" ? 10_000_000 : 10_000,
       transactionCostBps: 5,
       slippageBps: 0,
     }),
-    [endDate, frequency, startDate, strategy, symbols]
+    [endDate, frequency, returnBasis, startDate, strategy, symbols]
   );
 
   function run() {
@@ -108,6 +116,9 @@ export function BacktestPanel({ strategy, symbols }: BacktestPanelProps) {
           </CardTitle>
           <CardDescription>
             무료 EOD API 기준의 가상 과거 성과이며 미래 수익을 보장하지 않습니다.
+            현재 수익률 기준은{" "}
+            {returnBasis === "krwInvestor" ? "KRW 투자자 기준" : "상장 통화 기준"}
+            입니다.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -163,6 +174,11 @@ export function BacktestPanel({ strategy, symbols }: BacktestPanelProps) {
                 <Badge variant="outline">{result.provider}</Badge>
                 <Badge variant="secondary">{result.config.rebalanceFrequency}</Badge>
                 <Badge variant="secondary">
+                  {result.config.returnBasis === "krwInvestor"
+                    ? "KRW basis"
+                    : "Local basis"}
+                </Badge>
+                <Badge variant="secondary">
                   {result.rebalances.length} rebalances
                 </Badge>
               </div>
@@ -189,7 +205,7 @@ export function BacktestPanel({ strategy, symbols }: BacktestPanelProps) {
                 <div className="rounded-lg border p-3">
                   <p className="text-sm text-muted-foreground">종료 금액</p>
                   <p className="mt-1 text-2xl font-semibold">
-                    {formatCurrency(result.summary.endValue)}
+                    {formatCurrency(result.summary.endValue, displayCurrency)}
                   </p>
                 </div>
               </div>

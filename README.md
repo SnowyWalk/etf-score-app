@@ -1,6 +1,6 @@
 # ETF Score Dashboard
 
-Next.js + TypeScript ETF scoring dashboard. It can run with local sample data, or use free historical EOD ETF data for scoring and backtesting.
+Next.js + TypeScript ETF scoring dashboard. It can run with local sample data, or use free historical EOD ETF data for scoring, Top 10 ETF exploration, portfolio recommendations, currency-aware comparisons, and backtesting.
 
 ## Environment
 
@@ -29,6 +29,8 @@ Do not commit real API credentials. If the configured provider fails, the app fa
 ## Data Sources
 
 - `GET /api/market/etfs` returns a scoring-ready ETF snapshot from the configured EOD data provider.
+- The dashboard evaluates a curated ETF exploration universe, including US ETFs and selected KODEX `.KS` ETFs, and displays the strategy-specific Top 10.
+- The default `returnBasis` is `krwInvestor`: USD-listed ETF prices are converted with Yahoo `KRW=X` EOD FX data before scoring. Use `returnBasis=localPrice` to compare each ETF in its own listing currency.
 - `POST /api/backtest` runs the selected strategy over historical daily data.
 - `POST /api/ai/summaries` generates ETF summaries through the OpenAI Responses API when `OPENAI_API_KEY` is configured.
 - `GET /api/toss/account` returns read-only Toss account and holdings data when credentials are configured.

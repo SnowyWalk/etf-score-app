@@ -49,6 +49,8 @@ export function EtfScoreTable({ scores }: EtfScoreTableProps) {
           <TableRow className="bg-muted/60 hover:bg-muted/60">
             <TableHead>Symbol</TableHead>
             <TableHead>Name</TableHead>
+            <TableHead>Market</TableHead>
+            <TableHead>Currency</TableHead>
             <TableHead className="text-right">Momentum</TableHead>
             <TableHead className="text-right">Stability</TableHead>
             <TableHead className="text-right">Diversification</TableHead>
@@ -65,6 +67,16 @@ export function EtfScoreTable({ scores }: EtfScoreTableProps) {
               <TableCell className="font-semibold">{score.symbol}</TableCell>
               <TableCell className="min-w-56 text-muted-foreground">
                 {score.name}
+              </TableCell>
+              <TableCell>
+                <Badge variant="outline">{score.market}</Badge>
+              </TableCell>
+              <TableCell className="min-w-32 text-sm text-muted-foreground">
+                {score.listingCurrency}
+                {score.baseExposureCurrency !== score.listingCurrency
+                  ? ` / ${score.baseExposureCurrency}`
+                  : ""}
+                <div className="text-xs capitalize">{score.currencyHedge}</div>
               </TableCell>
               <TableCell>
                 <ScoreCell value={score.momentumScore} />

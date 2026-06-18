@@ -1,4 +1,4 @@
-import type { EtfRawData } from "./etf";
+import type { EtfRawData, ReturnBasis } from "./etf";
 
 export type DataFreshness = "realtime" | "delayed" | "eod" | "sample";
 
@@ -27,6 +27,8 @@ export type EtfMarketSnapshot = {
   etfs: EtfRawData[];
   status: MarketDataStatus;
   metricsAsOf: string;
+  returnBasis: ReturnBasis;
+  displayCurrency: string;
   universeVersion: string;
   metadataVersion: string;
 };

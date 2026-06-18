@@ -1,5 +1,11 @@
 export type EtfCategory = "equity" | "sector" | "bond" | "gold" | "cash";
 
+export type EtfMarket = "US" | "KR";
+
+export type CurrencyHedge = "hedged" | "unhedged" | "partial" | "unknown";
+
+export type ReturnBasis = "krwInvestor" | "localPrice";
+
 export type EtfRole =
   | "equityCore"
   | "equityGrowth"
@@ -21,6 +27,12 @@ export type ScoreWeights = {
 export type EtfRawData = {
   symbol: string;
   name: string;
+  market: EtfMarket;
+  listingCurrency: string;
+  baseExposureCurrency: string;
+  currencyHedge: CurrencyHedge;
+  returnBasis: ReturnBasis;
+  returnCurrency: string;
   category: EtfCategory;
   role: EtfRole;
   return1M: number;

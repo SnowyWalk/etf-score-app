@@ -5,7 +5,11 @@ import type {
   RebalanceEvent,
 } from "../../types/backtest";
 import type { Candle, MarketDataProvider } from "../../types/market";
-import { buildEtfRowsFromCandles } from "../market-data/metrics";
+import {
+  USD_KRW_SYMBOL,
+  buildEtfRowsFromCandles,
+  normalizeCandlesForReturnBasis,
+} from "../market-data/metrics";
 import { buildPortfolioRecommendation } from "../recommendation";
 import { calculateEtfScores } from "../scoring";
 import { getStrategyPreset } from "../strategy-presets";
@@ -168,7 +172,43 @@ export async function runBacktest(
     }
   }
 
-  const dates = tradingDays(candlesBySymbol, config.startDate, config.endDate);
+  let normalizedCandlesBySymbol = candlesBySymbol;
+
+  if (config.returnBasis === "krwInvestor") {
+    try {
+      const fxCandles = await provider.getHistoricalDailyCandles({
+        symbol: USD_KRW_SYMBOL,
+        startDate: config.startDate,
+        endDate: config.endDate,
+      });
+      const normalized = normalizeCandlesForReturnBasis(candlesBySymbol, {
+        returnBasis: config.returnBasis,
+        fxCandles,
+      });
+
+      normalizedCandlesBySymbol = normalized.candlesBySymbol;
+      warnings.push(...normalized.warnings);
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Unknown FX data error.";
+      warnings.push(
+        `USD/KRW FX data was unavailable, so backtest prices stayed in local listing currencies: ${message}`
+      );
+    }
+  } else {
+    const normalized = normalizeCandlesForReturnBasis(candlesBySymbol, {
+      returnBasis: config.returnBasis,
+    });
+
+    normalizedCandlesBySymbol = normalized.candlesBySymbol;
+    warnings.push(...normalized.warnings);
+  }
+
+  const dates = tradingDays(
+    normalizedCandlesBySymbol,
+    config.startDate,
+    config.endDate
+  );
   const decisionDates = rebalanceDates(dates, config.rebalanceFrequency);
 
   if (dates.length < 2 || decisionDates.length === 0) {
@@ -197,12 +237,15 @@ export async function runBacktest(
 
     if (rebalanceSet.has(date)) {
       const trailingBySymbol = Object.fromEntries(
-        Object.entries(candlesBySymbol).map(([symbol, candles]) => [
+        Object.entries(normalizedCandlesBySymbol).map(([symbol, candles]) => [
           symbol,
           candlesUntil(candles, date),
         ])
       );
-      const rows = buildEtfRowsFromCandles(trailingBySymbol);
+      const rows = buildEtfRowsFromCandles(trailingBySymbol, {
+        returnBasis: config.returnBasis,
+        returnCurrency: config.returnBasis === "krwInvestor" ? "KRW" : "LOCAL",
+      });
 
       if (rows.length > 0) {
         const scores = calculateEtfScores(
@@ -232,7 +275,10 @@ export async function runBacktest(
 
       activeBasePrices = Object.fromEntries(
         Object.keys(activeWeights).flatMap((symbol) => {
-          const price = priceOnOrBefore(candlesBySymbol[symbol] ?? [], date);
+          const price = priceOnOrBefore(
+            normalizedCandlesBySymbol[symbol] ?? [],
+            date
+          );
           return price ? [[symbol, price]] : [];
         })
       );
@@ -246,7 +292,10 @@ export async function runBacktest(
 
     for (const [symbol, weight] of Object.entries(activeWeights)) {
       const basePrice = activeBasePrices[symbol];
-      const currentPrice = priceOnOrBefore(candlesBySymbol[symbol] ?? [], date);
+      const currentPrice = priceOnOrBefore(
+        normalizedCandlesBySymbol[symbol] ?? [],
+        date
+      );
 
       if (basePrice && currentPrice) {
         periodReturn += weight * ((currentPrice / basePrice) - 1);
@@ -272,6 +321,9 @@ export async function runBacktest(
     rebalances,
     assumptions: [
       "Uses historical daily close prices from the configured free EOD API.",
+      config.returnBasis === "krwInvestor"
+        ? "USD-listed ETF prices are converted to KRW with USD/KRW EOD rates before scoring and simulation."
+        : "Each ETF is evaluated in its own listing currency; mixed-market results are not FX-normalized.",
       "Rebalance decisions use only candles available on or before each rebalance date.",
       "Scores and portfolio recommendation rules are frozen to the current app logic for this run.",
       "Results are hypothetical historical scenarios, not investment advice.",

@@ -101,7 +101,9 @@ async function fetchYahooCandles(input: {
     includeAdjustedClose: "true",
   });
   const response = await fetch(
-    `${YAHOO_CHART_URL}/${input.symbol.toUpperCase()}?${params.toString()}`,
+    `${YAHOO_CHART_URL}/${encodeURIComponent(
+      input.symbol.toUpperCase()
+    )}?${params.toString()}`,
     {
       cache: "no-store",
       headers: {

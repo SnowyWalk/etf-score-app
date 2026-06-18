@@ -1,4 +1,5 @@
 import type { EtfScore, PortfolioAllocation, StrategyType } from "./etf";
+import type { ReturnBasis } from "./etf";
 
 export type RebalanceFrequency = "monthly" | "quarterly";
 
@@ -8,6 +9,7 @@ export type BacktestConfig = {
   startDate: string;
   endDate: string;
   rebalanceFrequency: RebalanceFrequency;
+  returnBasis: ReturnBasis;
   initialCapital: number;
   transactionCostBps: number;
   slippageBps: number;

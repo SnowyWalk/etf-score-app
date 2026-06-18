@@ -1,8 +1,17 @@
-import type { EtfCategory, EtfRole } from "@/types/etf";
+import type {
+  CurrencyHedge,
+  EtfCategory,
+  EtfMarket,
+  EtfRole,
+} from "@/types/etf";
 
 export type EtfMetadata = {
   symbol: string;
   name: string;
+  market: EtfMarket;
+  listingCurrency: string;
+  baseExposureCurrency: string;
+  currencyHedge: CurrencyHedge;
   category: EtfCategory;
   role: EtfRole;
   expenseRatio: number;
@@ -10,10 +19,57 @@ export type EtfMetadata = {
   fallbackDiversificationScore: number;
 };
 
-export const defaultEtfUniverse = ["QQQ", "SPY", "XLF", "XLV", "GLD", "TLT"];
+export const defaultEtfUniverse = [
+  "QQQ",
+  "SPY",
+  "VTI",
+  "IVV",
+  "DIA",
+  "IWM",
+  "SCHD",
+  "VIG",
+  "XLK",
+  "XLV",
+  "XLF",
+  "XLE",
+  "XLY",
+  "XLP",
+  "GLD",
+  "IAU",
+  "TLT",
+  "IEF",
+  "SHY",
+  "AGG",
+  "BND",
+  "069500.KS",
+  "229200.KS",
+  "379800.KS",
+  "379810.KS",
+];
+
+const usDefaults = {
+  market: "US",
+  listingCurrency: "USD",
+  baseExposureCurrency: "USD",
+  currencyHedge: "unhedged",
+} satisfies Pick<
+  EtfMetadata,
+  "market" | "listingCurrency" | "baseExposureCurrency" | "currencyHedge"
+>;
+
+const krDefaults = {
+  market: "KR",
+  listingCurrency: "KRW",
+  baseExposureCurrency: "KRW",
+  currencyHedge: "unknown",
+} satisfies Pick<
+  EtfMetadata,
+  "market" | "listingCurrency" | "baseExposureCurrency" | "currencyHedge"
+>;
 
 export const etfMetadata: EtfMetadata[] = [
   {
+    ...usDefaults,
     symbol: "QQQ",
     name: "Invesco QQQ Trust",
     category: "equity",
@@ -23,6 +79,7 @@ export const etfMetadata: EtfMetadata[] = [
     fallbackDiversificationScore: 62,
   },
   {
+    ...usDefaults,
     symbol: "SPY",
     name: "SPDR S&P 500 ETF Trust",
     category: "equity",
@@ -32,6 +89,77 @@ export const etfMetadata: EtfMetadata[] = [
     fallbackDiversificationScore: 78,
   },
   {
+    ...usDefaults,
+    symbol: "VTI",
+    name: "Vanguard Total Stock Market ETF",
+    category: "equity",
+    role: "equityCore",
+    expenseRatio: 0.03,
+    fallbackLiquidityScore: 95,
+    fallbackDiversificationScore: 84,
+  },
+  {
+    ...usDefaults,
+    symbol: "IVV",
+    name: "iShares Core S&P 500 ETF",
+    category: "equity",
+    role: "equityCore",
+    expenseRatio: 0.03,
+    fallbackLiquidityScore: 94,
+    fallbackDiversificationScore: 78,
+  },
+  {
+    ...usDefaults,
+    symbol: "DIA",
+    name: "SPDR Dow Jones Industrial Average ETF Trust",
+    category: "equity",
+    role: "equityCore",
+    expenseRatio: 0.16,
+    fallbackLiquidityScore: 88,
+    fallbackDiversificationScore: 72,
+  },
+  {
+    ...usDefaults,
+    symbol: "IWM",
+    name: "iShares Russell 2000 ETF",
+    category: "equity",
+    role: "equityGrowth",
+    expenseRatio: 0.19,
+    fallbackLiquidityScore: 94,
+    fallbackDiversificationScore: 76,
+  },
+  {
+    ...usDefaults,
+    symbol: "SCHD",
+    name: "Schwab U.S. Dividend Equity ETF",
+    category: "equity",
+    role: "equityCore",
+    expenseRatio: 0.06,
+    fallbackLiquidityScore: 86,
+    fallbackDiversificationScore: 73,
+  },
+  {
+    ...usDefaults,
+    symbol: "VIG",
+    name: "Vanguard Dividend Appreciation ETF",
+    category: "equity",
+    role: "equityCore",
+    expenseRatio: 0.05,
+    fallbackLiquidityScore: 82,
+    fallbackDiversificationScore: 74,
+  },
+  {
+    ...usDefaults,
+    symbol: "XLK",
+    name: "Technology Select Sector SPDR Fund",
+    category: "sector",
+    role: "equityGrowth",
+    expenseRatio: 0.09,
+    fallbackLiquidityScore: 91,
+    fallbackDiversificationScore: 54,
+  },
+  {
+    ...usDefaults,
     symbol: "XLF",
     name: "Financial Select Sector SPDR Fund",
     category: "sector",
@@ -41,6 +169,7 @@ export const etfMetadata: EtfMetadata[] = [
     fallbackDiversificationScore: 55,
   },
   {
+    ...usDefaults,
     symbol: "XLV",
     name: "Health Care Select Sector SPDR Fund",
     category: "sector",
@@ -50,6 +179,37 @@ export const etfMetadata: EtfMetadata[] = [
     fallbackDiversificationScore: 66,
   },
   {
+    ...usDefaults,
+    symbol: "XLE",
+    name: "Energy Select Sector SPDR Fund",
+    category: "sector",
+    role: "sectorSatellite",
+    expenseRatio: 0.09,
+    fallbackLiquidityScore: 90,
+    fallbackDiversificationScore: 58,
+  },
+  {
+    ...usDefaults,
+    symbol: "XLY",
+    name: "Consumer Discretionary Select Sector SPDR Fund",
+    category: "sector",
+    role: "sectorSatellite",
+    expenseRatio: 0.09,
+    fallbackLiquidityScore: 84,
+    fallbackDiversificationScore: 56,
+  },
+  {
+    ...usDefaults,
+    symbol: "XLP",
+    name: "Consumer Staples Select Sector SPDR Fund",
+    category: "sector",
+    role: "sectorSatellite",
+    expenseRatio: 0.09,
+    fallbackLiquidityScore: 81,
+    fallbackDiversificationScore: 68,
+  },
+  {
+    ...usDefaults,
     symbol: "GLD",
     name: "SPDR Gold Shares",
     category: "gold",
@@ -59,6 +219,17 @@ export const etfMetadata: EtfMetadata[] = [
     fallbackDiversificationScore: 86,
   },
   {
+    ...usDefaults,
+    symbol: "IAU",
+    name: "iShares Gold Trust",
+    category: "gold",
+    role: "goldHedge",
+    expenseRatio: 0.25,
+    fallbackLiquidityScore: 84,
+    fallbackDiversificationScore: 86,
+  },
+  {
+    ...usDefaults,
     symbol: "TLT",
     name: "iShares 20+ Year Treasury Bond ETF",
     category: "bond",
@@ -66,6 +237,90 @@ export const etfMetadata: EtfMetadata[] = [
     expenseRatio: 0.15,
     fallbackLiquidityScore: 90,
     fallbackDiversificationScore: 88,
+  },
+  {
+    ...usDefaults,
+    symbol: "IEF",
+    name: "iShares 7-10 Year Treasury Bond ETF",
+    category: "bond",
+    role: "bondDefensive",
+    expenseRatio: 0.15,
+    fallbackLiquidityScore: 82,
+    fallbackDiversificationScore: 84,
+  },
+  {
+    ...usDefaults,
+    symbol: "SHY",
+    name: "iShares 1-3 Year Treasury Bond ETF",
+    category: "bond",
+    role: "cashLike",
+    expenseRatio: 0.15,
+    fallbackLiquidityScore: 80,
+    fallbackDiversificationScore: 80,
+  },
+  {
+    ...usDefaults,
+    symbol: "AGG",
+    name: "iShares Core U.S. Aggregate Bond ETF",
+    category: "bond",
+    role: "bondDefensive",
+    expenseRatio: 0.03,
+    fallbackLiquidityScore: 79,
+    fallbackDiversificationScore: 82,
+  },
+  {
+    ...usDefaults,
+    symbol: "BND",
+    name: "Vanguard Total Bond Market ETF",
+    category: "bond",
+    role: "bondDefensive",
+    expenseRatio: 0.03,
+    fallbackLiquidityScore: 78,
+    fallbackDiversificationScore: 82,
+  },
+  {
+    ...krDefaults,
+    symbol: "069500.KS",
+    name: "KODEX 200",
+    category: "equity",
+    role: "equityCore",
+    expenseRatio: 0.15,
+    fallbackLiquidityScore: 82,
+    fallbackDiversificationScore: 74,
+  },
+  {
+    ...krDefaults,
+    symbol: "229200.KS",
+    name: "KODEX KOSDAQ 150",
+    category: "equity",
+    role: "equityGrowth",
+    expenseRatio: 0.15,
+    fallbackLiquidityScore: 70,
+    fallbackDiversificationScore: 66,
+  },
+  {
+    ...krDefaults,
+    symbol: "379800.KS",
+    name: "KODEX US S&P 500 TR",
+    baseExposureCurrency: "USD",
+    currencyHedge: "unhedged",
+    category: "equity",
+    role: "equityCore",
+    expenseRatio: 0.15,
+    fallbackLiquidityScore: 76,
+    fallbackDiversificationScore: 78,
+  },
+  {
+    ...krDefaults,
+    symbol: "379810.KS",
+    name: "KODEX US Nasdaq 100 TR",
+    baseExposureCurrency: "USD",
+    currencyHedge: "unhedged",
+    category: "equity",
+    role: "equityGrowth",
+    expenseRatio: 0.15,
+    fallbackLiquidityScore: 74,
+    fallbackDiversificationScore: 62,
   },
 ];
 

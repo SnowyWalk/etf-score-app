@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { Candle } from "@/types/market";
-import { buildEtfRowsFromCandles } from "./metrics";
+import { buildEtfRowsFromCandles, normalizeCandlesForReturnBasis } from "./metrics";
 
 function makeCandles(symbol: string, closes: number[]): Candle[] {
   return closes.map((close, index) => ({
@@ -50,5 +50,25 @@ describe("buildEtfRowsFromCandles", () => {
     });
 
     expect(rows).toEqual([]);
+  });
+
+  it("converts USD-listed ETF candles to KRW investor basis with USD/KRW FX", () => {
+    const candles = makeCandles("SPY", [100, 110]);
+    const fxCandles = makeCandles("KRW=X", [1_300, 1_400]);
+
+    const normalized = normalizeCandlesForReturnBasis(
+      {
+        SPY: candles,
+      },
+      {
+        returnBasis: "krwInvestor",
+        fxCandles,
+      }
+    );
+
+    expect(normalized.displayCurrency).toBe("KRW");
+    expect(normalized.warnings).toEqual([]);
+    expect(normalized.candlesBySymbol.SPY[0].adjustedClose).toBe(130_000);
+    expect(normalized.candlesBySymbol.SPY[1].adjustedClose).toBe(154_000);
   });
 });

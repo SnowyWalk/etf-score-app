@@ -28,6 +28,7 @@ function normalizeConfig(body: Partial<BacktestConfig>): BacktestConfig {
     endDate,
     rebalanceFrequency:
       body.rebalanceFrequency === "quarterly" ? "quarterly" : "monthly",
+    returnBasis: body.returnBasis === "localPrice" ? "localPrice" : "krwInvestor",
     initialCapital: toNumber(body.initialCapital, 10_000),
     transactionCostBps: toNumber(body.transactionCostBps, 5),
     slippageBps: toNumber(body.slippageBps, 0),

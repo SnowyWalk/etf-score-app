@@ -7,6 +7,7 @@ export async function GET(request: Request) {
   const snapshot = await getEtfMarketSnapshot({
     symbols: searchParams.get("symbols") ?? undefined,
     forceRefresh: searchParams.get("refresh") === "true",
+    returnBasis: searchParams.get("returnBasis") ?? undefined,
   });
 
   return NextResponse.json(snapshot);
