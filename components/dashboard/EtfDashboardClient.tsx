@@ -240,7 +240,7 @@ export function EtfDashboardClient({
               AI 요약이 아닌 규칙 기반 문장입니다.
             </p>
           </div>
-          <EtfSummaryList scores={scores} />
+          <EtfSummaryList scores={scores} strategy={strategy} />
         </section>
 
         <BacktestPanel
