@@ -40,6 +40,8 @@ export type EtfRawData = {
   currencyHedge: CurrencyHedge;
   returnBasis: ReturnBasis;
   returnCurrency: string;
+  latestPrice?: number;
+  latestPriceDate?: string;
   category: EtfCategory;
   role: EtfRole;
   return1M: number;

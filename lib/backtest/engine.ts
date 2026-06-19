@@ -5,11 +5,14 @@ import type {
   RebalanceEvent,
 } from "../../types/backtest";
 import type { Candle, MarketDataProvider } from "../../types/market";
+import type { StrategyPolicy, TargetAllocation } from "../../types/portfolio";
+import { evaluateMarketRegime } from "../market-regime";
 import {
   USD_KRW_SYMBOL,
   buildEtfRowsFromCandles,
   normalizeCandlesForReturnBasis,
 } from "../market-data/metrics";
+import { buildTargetAllocations } from "../portfolio/policy";
 import { buildPortfolioRecommendation } from "../recommendation";
 import { calculateEtfScores } from "../scoring";
 import { getStrategyPreset } from "../strategy-presets";
@@ -90,6 +93,20 @@ function normalizeAllocations(allocations: { symbol: string; weight: number }[])
   ) as WeightMap;
 }
 
+function normalizeTargetAllocations(input: {
+  allocations: TargetAllocation[];
+  cashBufferPct: number;
+}) {
+  const investedRatio = Math.max(0, 1 - input.cashBufferPct / 100);
+
+  return Object.fromEntries(
+    input.allocations.map((allocation) => [
+      allocation.symbol,
+      (allocation.targetWeightPct / 100) * investedRatio,
+    ])
+  ) as WeightMap;
+}
+
 function calculateTurnover(previous: WeightMap, next: WeightMap) {
   const symbols = new Set([...Object.keys(previous), ...Object.keys(next)]);
   let diff = 0;
@@ -131,6 +148,38 @@ function currentDriftedWeights(input: {
     }
   );
   const total = weightedValues.reduce((sum, [, value]) => sum + value, 0);
+
+  if (total <= 0) {
+    return input.activeWeights;
+  }
+
+  return Object.fromEntries(
+    weightedValues.map(([symbol, value]) => [symbol, value / total])
+  ) as WeightMap;
+}
+
+function currentPolicyDriftedWeights(input: {
+  activeWeights: WeightMap;
+  activeBasePrices: Record<string, number>;
+  candlesBySymbol: CandleMap;
+  date: string;
+  cashWeight: number;
+}) {
+  const weightedValues = Object.entries(input.activeWeights).flatMap(
+    ([symbol, weight]): Array<[string, number]> => {
+      const basePrice = input.activeBasePrices[symbol];
+      const currentPrice = priceOnOrBefore(input.candlesBySymbol[symbol] ?? [], input.date);
+
+      if (!basePrice || !currentPrice) {
+        return [];
+      }
+
+      return [[symbol, weight * (currentPrice / basePrice)]];
+    }
+  );
+  const total =
+    input.cashWeight +
+    weightedValues.reduce((sum, [, value]) => sum + value, 0);
 
   if (total <= 0) {
     return input.activeWeights;
@@ -459,6 +508,231 @@ export async function runBacktest(
         : "Each ETF is evaluated in its own listing currency; mixed-market results are not FX-normalized.",
       "Rebalance decisions use only candles available on or before each rebalance date.",
       "Scores and portfolio recommendation rules are frozen to the current app logic for this run.",
+      "Results are hypothetical historical scenarios, not investment advice.",
+    ],
+    warnings,
+  };
+}
+
+export async function runPolicyBacktest(
+  config: Omit<BacktestConfig, "strategy">,
+  policy: StrategyPolicy,
+  provider: MarketDataProvider
+): Promise<BacktestResult> {
+  const warnings: string[] = [];
+  const candlesBySymbol: CandleMap = {};
+  const symbolsToFetch = Array.from(
+    new Set([...config.symbols, config.benchmarkSymbol].filter(Boolean))
+  );
+
+  for (const symbol of symbolsToFetch) {
+    candlesBySymbol[symbol] = await provider.getHistoricalDailyCandles({
+      symbol,
+      startDate: config.startDate,
+      endDate: config.endDate,
+    });
+
+    if (candlesBySymbol[symbol].length < 2) {
+      warnings.push(`${symbol} has insufficient historical candles.`);
+    }
+  }
+
+  let normalizedCandlesBySymbol = candlesBySymbol;
+
+  if (config.returnBasis === "krwInvestor") {
+    try {
+      const fxCandles = await provider.getHistoricalDailyCandles({
+        symbol: USD_KRW_SYMBOL,
+        startDate: config.startDate,
+        endDate: config.endDate,
+      });
+      const normalized = normalizeCandlesForReturnBasis(candlesBySymbol, {
+        returnBasis: config.returnBasis,
+        fxCandles,
+      });
+
+      normalizedCandlesBySymbol = normalized.candlesBySymbol;
+      warnings.push(...normalized.warnings);
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Unknown FX data error.";
+      warnings.push(
+        `USD/KRW FX data was unavailable, so backtest prices stayed in local listing currencies: ${message}`
+      );
+    }
+  } else {
+    const normalized = normalizeCandlesForReturnBasis(candlesBySymbol, {
+      returnBasis: config.returnBasis,
+    });
+
+    normalizedCandlesBySymbol = normalized.candlesBySymbol;
+    warnings.push(...normalized.warnings);
+  }
+
+  const dates = tradingDays(
+    normalizedCandlesBySymbol,
+    config.startDate,
+    config.endDate
+  );
+  const decisionDates = rebalanceDates(dates, config.rebalanceFrequency);
+
+  if (dates.length < 2 || decisionDates.length === 0) {
+    throw new Error("Not enough historical data for the selected backtest range.");
+  }
+
+  let portfolioValue = config.initialCapital;
+  let peak = portfolioValue;
+  let activeWeights: WeightMap = {};
+  let activeBasePrices: Record<string, number> = {};
+  let rebalanceBaseValue = portfolioValue;
+  const rebalances: RebalanceEvent[] = [];
+  const equityCurve: BacktestPoint[] = [];
+  const rebalanceSet = new Set(decisionDates);
+  const costRate = (config.transactionCostBps + config.slippageBps) / 10_000;
+  const cashWeight = Math.max(0, policy.cashBufferPct / 100);
+
+  for (const date of dates) {
+    if (rebalanceSet.has(date)) {
+      const trailingBySymbol = Object.fromEntries(
+        config.symbols.map((symbol) => [
+          symbol,
+          candlesUntil(normalizedCandlesBySymbol[symbol] ?? [], date),
+        ])
+      );
+      const rows = buildEtfRowsFromCandles(trailingBySymbol, {
+        returnBasis: config.returnBasis,
+        returnCurrency: config.returnBasis === "krwInvestor" ? "KRW" : "LOCAL",
+      }).filter((row) => row.dataQuality.status !== "excluded");
+
+      if (rows.length > 0) {
+        const scores = calculateEtfScores(
+          rows,
+          getStrategyPreset("balanced").weights
+        );
+        const marketRegime = evaluateMarketRegime(scores);
+
+        if (marketRegime.type !== "riskOff" || Object.keys(activeWeights).length > 0) {
+          const targetAllocations = buildTargetAllocations({
+            scores,
+            marketRegime: marketRegime.type,
+            policy,
+          });
+          const nextWeights = normalizeTargetAllocations({
+            allocations: targetAllocations,
+            cashBufferPct: policy.cashBufferPct,
+          });
+          const driftedWeights = currentPolicyDriftedWeights({
+            activeWeights,
+            activeBasePrices,
+            candlesBySymbol: normalizedCandlesBySymbol,
+            date,
+            cashWeight,
+          });
+          const maxDrift = maxWeightDifference(
+            Object.keys(driftedWeights).length > 0 ? driftedWeights : activeWeights,
+            nextWeights
+          );
+          const shouldRebalance =
+            rebalances.length === 0 ||
+            config.rebalanceMode === "scheduled" ||
+            maxDrift >= policy.driftThresholdPct / 100;
+
+          if (shouldRebalance && Object.keys(nextWeights).length > 0) {
+            const turnover = calculateTurnover(activeWeights, nextWeights);
+            const cost = portfolioValue * turnover * costRate;
+
+            portfolioValue -= cost;
+            rebalanceBaseValue = portfolioValue;
+            activeWeights = nextWeights;
+            activeBasePrices = Object.fromEntries(
+              Object.keys(activeWeights).flatMap((symbol) => {
+                const price = priceOnOrBefore(
+                  normalizedCandlesBySymbol[symbol] ?? [],
+                  date
+                );
+                return price ? [[symbol, price]] : [];
+              })
+            );
+            rebalances.push({
+              date: dateKey(date),
+              allocations: targetAllocations.map((allocation) => {
+                const score = scores.find((item) => item.symbol === allocation.symbol);
+
+                return {
+                  symbol: allocation.symbol,
+                  name: score?.name ?? allocation.symbol,
+                  role: allocation.role,
+                  weight: allocation.targetWeightPct * (1 - policy.cashBufferPct / 100),
+                  totalScore: score?.totalScore ?? 0,
+                  rationale: allocation.rationale,
+                };
+              }),
+              scores,
+              turnover,
+              cost,
+            });
+          }
+        }
+      }
+    }
+
+    if (Object.keys(activeWeights).length > 0) {
+      let periodReturn = cashWeight;
+
+      for (const [symbol, weight] of Object.entries(activeWeights)) {
+        const basePrice = activeBasePrices[symbol];
+        const currentPrice = priceOnOrBefore(
+          normalizedCandlesBySymbol[symbol] ?? [],
+          date
+        );
+
+        if (basePrice && currentPrice) {
+          periodReturn += weight * (currentPrice / basePrice);
+        }
+      }
+
+      portfolioValue = rebalanceBaseValue * periodReturn;
+    }
+
+    peak = Math.max(peak, portfolioValue);
+    equityCurve.push({
+      date: dateKey(date),
+      portfolioValue: Math.round(portfolioValue * 100) / 100,
+      drawdown: Math.round(calculateDrawdown(portfolioValue, peak) * 100) / 100,
+    });
+  }
+
+  const backtestConfig = {
+    ...config,
+    strategy: "balanced" as const,
+  };
+  const summary = summarizeCurve(backtestConfig, equityCurve, rebalances);
+  const benchmark = benchmarkCurve({
+    symbol: config.benchmarkSymbol,
+    candles: normalizedCandlesBySymbol[config.benchmarkSymbol] ?? [],
+    config: backtestConfig,
+  });
+
+  return {
+    config: backtestConfig,
+    provider: provider.id,
+    summary,
+    benchmark: benchmark
+      ? {
+          ...benchmark,
+          excessCagr: summary.cagr - benchmark.cagr,
+        }
+      : undefined,
+    equityCurve,
+    rebalances,
+    assumptions: [
+      `Uses saved policy ${policy.name}: ${policy.rebalanceFrequency} rebalance, ${policy.driftThresholdPct}% drift threshold, ${policy.cashBufferPct}% cash buffer.`,
+      "Each rebalance decision uses only candles available on or before that date.",
+      "Risk-Off blocks the initial new-cash buy; once invested, Risk-Off can rebalance existing holdings to defensive targets.",
+      config.returnBasis === "krwInvestor"
+        ? "USD-listed ETF prices are converted to KRW with USD/KRW EOD rates before scoring and simulation."
+        : "US ETF results use local USD adjusted close prices.",
+      "Transaction costs are applied on turnover at the configured bps rate.",
       "Results are hypothetical historical scenarios, not investment advice.",
     ],
     warnings,

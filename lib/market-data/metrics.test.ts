@@ -40,6 +40,8 @@ describe("buildEtfRowsFromCandles", () => {
     });
     expect(rows[0].return1M).toBeGreaterThan(0);
     expect(rows[0].return12M).toBeGreaterThan(0);
+    expect(rows[0].latestPrice).toBe(419);
+    expect(rows[0].latestPriceDate).toBe("2025-11-16T00:00:00.000Z");
     expect(rows[0].volatility).toBeGreaterThanOrEqual(0);
     expect(rows[0].liquidityScore).toBeGreaterThanOrEqual(0);
   });

@@ -1,8 +1,10 @@
 import { NextResponse } from "next/server";
 
 import { defaultEtfUniverse } from "@/data/etf-metadata";
-import { runBacktest } from "@/lib/backtest/engine";
+import { runBacktest, runPolicyBacktest } from "@/lib/backtest/engine";
 import { getConfiguredMarketProvider } from "@/lib/market-data/provider";
+import { getPortfolioState } from "@/lib/portfolio/repository";
+import { US_ETF_UNIVERSE } from "@/lib/portfolio/universe";
 import type { BacktestConfig } from "@/types/backtest";
 import type { StrategyType } from "@/types/etf";
 
@@ -41,9 +43,22 @@ function normalizeConfig(body: Partial<BacktestConfig>): BacktestConfig {
 
 export async function POST(request: Request) {
   try {
-    const config = normalizeConfig(await request.json());
+    const body = await request.json();
+    const config = normalizeConfig(body);
     const provider = getConfiguredMarketProvider();
-    const result = await runBacktest(config, provider);
+    const policy = body.policyMode === true ? getPortfolioState().policy : undefined;
+    const result = policy
+      ? await runPolicyBacktest(
+          {
+            ...config,
+            symbols: body.symbols?.length ? body.symbols : [...US_ETF_UNIVERSE],
+            rebalanceFrequency: policy.rebalanceFrequency,
+            driftThresholdPct: policy.driftThresholdPct,
+          },
+          policy,
+          provider
+        )
+      : await runBacktest(config, provider);
 
     return NextResponse.json(result);
   } catch (error) {

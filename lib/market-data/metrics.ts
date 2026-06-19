@@ -195,6 +195,8 @@ export function buildEtfRowsFromCandles(
       returnBasis: options.returnBasis ?? "localPrice",
       returnCurrency:
         options.returnCurrency ?? latest.currency ?? metadata.listingCurrency,
+      latestPrice: round(toPrice(latest)),
+      latestPriceDate: latest.date,
       category: metadata.category,
       role: metadata.role,
       return1M,
