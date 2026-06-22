@@ -83,6 +83,60 @@ function money(value: number, currency = "USD") {
   }).format(Number.isFinite(value) ? value : 0);
 }
 
+function usdWithKrw(value: number, fxRate?: number) {
+  const usd = money(value);
+
+  if (!fxRate || !Number.isFinite(fxRate)) {
+    return usd;
+  }
+
+  return `${usd} (${money(value * fxRate, "KRW")})`;
+}
+
+function usdAndKrw(usd: number, krw: number) {
+  return `${money(usd)} (${money(krw, "KRW")})`;
+}
+
+function signedMoney(value: number, currency = "USD") {
+  return value > 0 ? `+${money(value, currency)}` : money(value, currency);
+}
+
+function signedUsdAndKrw(usd: number, krw: number) {
+  return `${signedMoney(usd)} (${signedMoney(krw, "KRW")})`;
+}
+
+function signedPct(value: number) {
+  return `${value > 0 ? "+" : ""}${value.toFixed(2)}%`;
+}
+
+function profitClass(value: number) {
+  if (value > 0) return "text-emerald-600";
+  if (value < 0) return "text-red-600";
+  return "text-muted-foreground";
+}
+
+function exchangeRate(value: number) {
+  return new Intl.NumberFormat("en-US", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(value);
+}
+
+function marketDate(value: string) {
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+
+  return new Intl.DateTimeFormat("ko-KR", {
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+    timeZone: "Asia/Seoul",
+  }).format(date);
+}
+
 function pct(value: number) {
   return `${value.toFixed(1)}%`;
 }
@@ -402,6 +456,7 @@ export function EtfDashboardClient({
               onSubmit={recordTrade}
               positions={portfolio.positions}
               trades={portfolio.manualTrades}
+              marketEtfs={activeEtfs}
             />
           </TabsContent>
 
@@ -576,12 +631,14 @@ function ExecutionTab({
   onSubmit,
   positions,
   trades,
+  marketEtfs,
 }: {
   form: TradeForm;
   setForm: (updater: (current: TradeForm) => TradeForm) => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
   positions: PortfolioState["positions"];
   trades: PortfolioState["manualTrades"];
+  marketEtfs: EtfRawData[];
 }) {
   return (
     <div className="grid gap-4 lg:grid-cols-[360px_1fr]">
@@ -653,7 +710,7 @@ function ExecutionTab({
       </Card>
 
       <div className="grid gap-4">
-        <PositionsCard positions={positions} />
+        <PositionsCard positions={positions} trades={trades} marketEtfs={marketEtfs} />
         <TradeHistoryCard trades={trades} />
       </div>
     </div>
@@ -686,7 +743,76 @@ function NumberField({
   );
 }
 
-function PositionsCard({ positions }: { positions: PortfolioState["positions"] }) {
+function PositionsCard({
+  positions,
+  trades,
+  marketEtfs,
+}: {
+  positions: PortfolioState["positions"];
+  trades: PortfolioState["manualTrades"];
+  marketEtfs: EtfRawData[];
+}) {
+  const positionCosts = positions.map((position) => {
+    const fxRate = trades.find(
+      (trade) => trade.symbol === position.symbol && trade.fxRate > 0
+    )?.fxRate;
+    const usd = position.avgPrice * position.quantity;
+
+    return { fxRate, usd, krw: fxRate ? usd * fxRate : undefined };
+  });
+  const totalCostUsd = positionCosts.reduce((sum, cost) => sum + cost.usd, 0);
+  const hasAllFxRates = positionCosts.every((cost) => cost.krw !== undefined);
+  const totalCostKrw = positionCosts.reduce((sum, cost) => sum + (cost.krw ?? 0), 0);
+  const positionValues = positions.map((position) => {
+    const marketEtf = marketEtfs.find((etf) => etf.symbol === position.symbol);
+    const fxRate = trades.find(
+      (trade) => trade.symbol === position.symbol && trade.fxRate > 0
+    )?.fxRate;
+    const latestPrice = marketEtf?.latestPrice;
+
+    if (!latestPrice || latestPrice <= 0) {
+      return { symbol: position.symbol, usd: undefined, krw: undefined, priceDate: undefined };
+    }
+
+    if (marketEtf.returnCurrency === "KRW") {
+      const krw = latestPrice * position.quantity;
+      return {
+        symbol: position.symbol,
+        usd: fxRate ? krw / fxRate : undefined,
+        krw,
+        priceDate: marketEtf.latestPriceDate,
+      };
+    }
+
+    const usd = latestPrice * position.quantity;
+    return {
+      symbol: position.symbol,
+      usd,
+      krw: fxRate ? usd * fxRate : undefined,
+      priceDate: marketEtf.latestPriceDate,
+    };
+  });
+  const hasCompleteValuation =
+    positions.length > 0 &&
+    positionValues.every((value) => value.usd !== undefined && value.krw !== undefined);
+  const totalValueUsd = positionValues.reduce((sum, value) => sum + (value.usd ?? 0), 0);
+  const totalValueKrw = positionValues.reduce((sum, value) => sum + (value.krw ?? 0), 0);
+  const hasCompleteProfit = hasCompleteValuation && hasAllFxRates && totalCostUsd > 0;
+  const totalProfitUsd = totalValueUsd - totalCostUsd;
+  const totalProfitKrw = totalValueKrw - totalCostKrw;
+  const totalReturnPct = (totalProfitUsd / Math.max(totalCostUsd, Number.EPSILON)) * 100;
+  const priceDates = Array.from(
+    new Set(
+      positionValues
+        .map((value) => value.priceDate)
+        .filter((date): date is string => Boolean(date))
+    )
+  );
+  const valuationBasis =
+    priceDates.length === 1
+      ? `${marketDate(priceDates[0])} 종가 기준`
+      : "종목별 최신 종가 기준";
+
   return (
     <Card>
       <CardHeader>
@@ -694,27 +820,108 @@ function PositionsCard({ positions }: { positions: PortfolioState["positions"] }
         <CardDescription>리밸런싱은 이 보유 현황을 기준으로 계산합니다.</CardDescription>
       </CardHeader>
       <CardContent>
+        <div className="mb-4 grid gap-3 sm:grid-cols-3">
+          <div className="rounded-md border bg-muted/30 p-3">
+            <p className="text-sm text-muted-foreground">총 매입금액</p>
+            <p className="mt-1 text-xl font-semibold">
+              {hasAllFxRates ? usdAndKrw(totalCostUsd, totalCostKrw) : money(totalCostUsd)}
+            </p>
+          </div>
+          <div className="rounded-md border bg-muted/30 p-3">
+            <p className="text-sm text-muted-foreground">평가금액 · {valuationBasis}</p>
+            <p className="mt-1 text-xl font-semibold">
+              {hasCompleteValuation
+                ? usdAndKrw(totalValueUsd, totalValueKrw)
+                : "가격 데이터 없음"}
+            </p>
+          </div>
+          <div className="rounded-md border bg-muted/30 p-3">
+            <p className="text-sm text-muted-foreground">총 평가손익 · 수익률</p>
+            <div
+              className={`mt-1 ${
+                hasCompleteProfit ? profitClass(totalProfitUsd) : "text-muted-foreground"
+              }`}
+            >
+              {hasCompleteProfit ? (
+                <>
+                  <p className="text-xl font-semibold">
+                    {signedUsdAndKrw(totalProfitUsd, totalProfitKrw)}
+                  </p>
+                  <p className="mt-1 text-sm font-medium">수익률 {signedPct(totalReturnPct)}</p>
+                </>
+              ) : (
+                <p className="text-xl font-semibold">가격 데이터 없음</p>
+              )}
+            </div>
+          </div>
+        </div>
         <Table>
           <TableHeader>
             <TableRow>
               <TableHead>Symbol</TableHead>
               <TableHead className="text-right">Quantity</TableHead>
-              <TableHead className="text-right">Avg Price</TableHead>
+              <TableHead className="text-right">평균 매입단가</TableHead>
               <TableHead>Updated</TableHead>
+              <TableHead className="text-right">평가금액</TableHead>
+              <TableHead className="text-right">평가손익</TableHead>
+              <TableHead className="text-right">수익률</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
-            {positions.map((position) => (
-              <TableRow key={position.symbol}>
-                <TableCell className="font-medium">{position.symbol}</TableCell>
-                <TableCell className="text-right">{position.quantity.toFixed(4)}</TableCell>
-                <TableCell className="text-right">{money(position.avgPrice, position.currency)}</TableCell>
-                <TableCell>{new Date(position.updatedAt).toLocaleDateString("ko-KR")}</TableCell>
-              </TableRow>
-            ))}
+            {positions.map((position) => {
+              const fxRate = trades.find(
+                (trade) => trade.symbol === position.symbol && trade.fxRate > 0
+              )?.fxRate;
+              const value = positionValues.find(
+                (positionValue) => positionValue.symbol === position.symbol
+              );
+              const costUsd = position.avgPrice * position.quantity;
+              const costKrw = fxRate ? costUsd * fxRate : undefined;
+              const profitUsd = value?.usd === undefined ? undefined : value.usd - costUsd;
+              const profitKrw =
+                value?.krw === undefined || costKrw === undefined
+                  ? undefined
+                  : value.krw - costKrw;
+              const returnPct =
+                profitUsd === undefined || costUsd <= 0
+                  ? undefined
+                  : (profitUsd / costUsd) * 100;
+
+              return (
+                <TableRow key={position.symbol}>
+                  <TableCell className="font-medium">{position.symbol}</TableCell>
+                  <TableCell className="text-right">{position.quantity.toFixed(4)}</TableCell>
+                  <TableCell className="whitespace-nowrap text-right">
+                    {usdWithKrw(position.avgPrice, fxRate)}
+                  </TableCell>
+                  <TableCell>{new Date(position.updatedAt).toLocaleDateString("ko-KR")}</TableCell>
+                  <TableCell className="whitespace-nowrap text-right">
+                    {value?.usd !== undefined && value.krw !== undefined
+                      ? usdAndKrw(value.usd, value.krw)
+                      : "-"}
+                  </TableCell>
+                  <TableCell
+                    className={`whitespace-nowrap text-right ${
+                      profitUsd === undefined ? "text-muted-foreground" : profitClass(profitUsd)
+                    }`}
+                  >
+                    {profitUsd !== undefined && profitKrw !== undefined
+                      ? signedUsdAndKrw(profitUsd, profitKrw)
+                      : "-"}
+                  </TableCell>
+                  <TableCell
+                    className={`whitespace-nowrap text-right ${
+                      returnPct === undefined ? "text-muted-foreground" : profitClass(returnPct)
+                    }`}
+                  >
+                    {returnPct === undefined ? "-" : signedPct(returnPct)}
+                  </TableCell>
+                </TableRow>
+              );
+            })}
             {positions.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={4} className="text-muted-foreground">
+                <TableCell colSpan={7} className="text-muted-foreground">
                   저장된 보유 ETF가 없습니다.
                 </TableCell>
               </TableRow>
@@ -741,6 +948,9 @@ function TradeHistoryCard({ trades }: { trades: PortfolioState["manualTrades"] }
               <TableHead>Symbol</TableHead>
               <TableHead className="text-right">Quantity</TableHead>
               <TableHead className="text-right">Price</TableHead>
+              <TableHead className="text-right">Fee</TableHead>
+              <TableHead className="text-right">FX rate</TableHead>
+              <TableHead className="text-right">체결금액</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -750,12 +960,21 @@ function TradeHistoryCard({ trades }: { trades: PortfolioState["manualTrades"] }
                 <TableCell>{trade.side.toUpperCase()}</TableCell>
                 <TableCell className="font-medium">{trade.symbol}</TableCell>
                 <TableCell className="text-right">{trade.quantity.toFixed(4)}</TableCell>
-                <TableCell className="text-right">{money(trade.price, trade.currency)}</TableCell>
+                <TableCell className="whitespace-nowrap text-right">
+                  {usdWithKrw(trade.price, trade.fxRate)}
+                </TableCell>
+                <TableCell className="whitespace-nowrap text-right">
+                  {usdWithKrw(trade.fee, trade.fxRate)}
+                </TableCell>
+                <TableCell className="text-right">{exchangeRate(trade.fxRate)}</TableCell>
+                <TableCell className="whitespace-nowrap text-right">
+                  {usdWithKrw(trade.price * trade.quantity, trade.fxRate)}
+                </TableCell>
               </TableRow>
             ))}
             {trades.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={5} className="text-muted-foreground">
+                <TableCell colSpan={8} className="text-muted-foreground">
                   체결 이력이 없습니다.
                 </TableCell>
               </TableRow>
