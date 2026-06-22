@@ -15,6 +15,7 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "ETF Score Dashboard",
   description: "Sample-data ETF scoring and portfolio weight dashboard.",
+  robots: { index: false, follow: false },
 };
 
 export default function RootLayout({

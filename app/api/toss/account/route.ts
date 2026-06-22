@@ -1,8 +1,12 @@
 import { NextResponse } from "next/server";
 
+import { requireApiAuth } from "@/lib/auth/session";
 import { getTossAccountSnapshot, isTossConfigured } from "@/lib/toss/client";
 
-export async function GET() {
+export async function GET(request: Request) {
+  const unauthorized = requireApiAuth(request);
+  if (unauthorized) return unauthorized;
+
   if (!isTossConfigured()) {
     return NextResponse.json(
       {

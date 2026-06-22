@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 
+import { requireApiAuth } from "@/lib/auth/session";
 import { recordManualTrade } from "@/lib/portfolio/repository";
 import type { TradeSide } from "@/types/portfolio";
 
@@ -13,6 +14,9 @@ function asNumber(value: unknown, fallback = 0) {
 }
 
 export async function POST(request: Request) {
+  const unauthorized = requireApiAuth(request);
+  if (unauthorized) return unauthorized;
+
   const body = await request.json();
   const symbol = String(body.symbol ?? "").trim().toUpperCase();
   const side = String(body.side ?? "buy") as TradeSide;

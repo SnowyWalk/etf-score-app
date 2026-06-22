@@ -1,6 +1,12 @@
 import "server-only";
 
 import Database from "better-sqlite3";
+import {
+  createHash,
+  randomBytes,
+  scryptSync,
+  timingSafeEqual,
+} from "node:crypto";
 import { mkdirSync } from "node:fs";
 import path from "node:path";
 
@@ -13,6 +19,13 @@ import type {
 import { DEFAULT_POLICY } from "./policy";
 
 const DB_PATH = path.join(process.cwd(), "data", "local", "portfolio.sqlite");
+const AUTH_ID = "primary";
+const DEFAULT_PASSWORD_SALT = "a230160178c700203f356dd5b5fb55b9";
+const DEFAULT_PASSWORD_HASH =
+  "f41bc5a504e9685be3f98ff128347c113dd2ec45fbb46c11aca3bdd850a99014a3eeb8e268f93f2dc31824d2c730fc6c382a3c796aff8b3f2c92aefc7efff68b";
+const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+const MAX_LOGIN_FAILURES = 5;
+const LOGIN_LOCK_MS = 15 * 60 * 1000;
 
 let db: Database.Database | undefined;
 
@@ -80,6 +93,26 @@ function migrate(database: Database.Database) {
       status TEXT NOT NULL,
       tossOrderId TEXT
     );
+
+    CREATE TABLE IF NOT EXISTS app_auth (
+      id TEXT PRIMARY KEY,
+      passwordHash TEXT NOT NULL,
+      passwordSalt TEXT NOT NULL,
+      updatedAt TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS auth_sessions (
+      tokenHash TEXT PRIMARY KEY,
+      createdAt TEXT NOT NULL,
+      expiresAt TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS auth_rate_limits (
+      clientKey TEXT PRIMARY KEY,
+      failedAttempts INTEGER NOT NULL,
+      blockedUntil TEXT,
+      updatedAt TEXT NOT NULL
+    );
   `);
 
   const existing = database
@@ -99,6 +132,144 @@ function migrate(database: Database.Database) {
       )
       .run(DEFAULT_POLICY);
   }
+
+  const existingAuth = database
+    .prepare("SELECT id FROM app_auth WHERE id = ?")
+    .get(AUTH_ID);
+
+  if (!existingAuth) {
+    database
+      .prepare(
+        `INSERT INTO app_auth (id, passwordHash, passwordSalt, updatedAt)
+          VALUES (?, ?, ?, ?)`
+      )
+      .run(
+        AUTH_ID,
+        DEFAULT_PASSWORD_HASH,
+        DEFAULT_PASSWORD_SALT,
+        new Date().toISOString()
+      );
+  }
+}
+
+type AuthCredential = {
+  passwordHash: string;
+  passwordSalt: string;
+};
+
+type AuthRateLimit = {
+  failedAttempts: number;
+  blockedUntil: string | null;
+};
+
+function hashSessionToken(token: string) {
+  return createHash("sha256").update(token).digest("hex");
+}
+
+function hashClientKey(clientKey: string) {
+  return createHash("sha256").update(clientKey).digest("hex");
+}
+
+function verifyPassword(password: string, credential: AuthCredential) {
+  const actual = scryptSync(password, credential.passwordSalt, 64);
+  const expected = Buffer.from(credential.passwordHash, "hex");
+
+  return actual.length === expected.length && timingSafeEqual(actual, expected);
+}
+
+export function authenticateAppPassword(password: string, clientKey: string) {
+  const database = getDb();
+  const now = new Date();
+  const rateLimitKey = hashClientKey(clientKey);
+  const rateLimit = database
+    .prepare(
+      "SELECT failedAttempts, blockedUntil FROM auth_rate_limits WHERE clientKey = ?"
+    )
+    .get(rateLimitKey) as AuthRateLimit | undefined;
+  const blockedUntil = rateLimit?.blockedUntil
+    ? new Date(rateLimit.blockedUntil)
+    : undefined;
+
+  if (blockedUntil && blockedUntil.getTime() > now.getTime()) {
+    return {
+      ok: false as const,
+      retryAfterSeconds: Math.max(
+        1,
+        Math.ceil((blockedUntil.getTime() - now.getTime()) / 1000)
+      ),
+    };
+  }
+
+  const credential = database
+    .prepare("SELECT passwordHash, passwordSalt FROM app_auth WHERE id = ?")
+    .get(AUTH_ID) as AuthCredential;
+
+  if (!verifyPassword(password, credential)) {
+    const failedAttempts = (rateLimit?.failedAttempts ?? 0) + 1;
+    const nextBlockedUntil =
+      failedAttempts >= MAX_LOGIN_FAILURES
+        ? new Date(now.getTime() + LOGIN_LOCK_MS).toISOString()
+        : null;
+
+    database
+      .prepare(
+        `INSERT INTO auth_rate_limits (
+          clientKey, failedAttempts, blockedUntil, updatedAt
+        ) VALUES (?, ?, ?, ?)
+        ON CONFLICT(clientKey) DO UPDATE SET
+          failedAttempts = excluded.failedAttempts,
+          blockedUntil = excluded.blockedUntil,
+          updatedAt = excluded.updatedAt`
+      )
+      .run(rateLimitKey, failedAttempts, nextBlockedUntil, now.toISOString());
+
+    return {
+      ok: false as const,
+      retryAfterSeconds: nextBlockedUntil ? LOGIN_LOCK_MS / 1000 : undefined,
+    };
+  }
+
+  const token = randomBytes(32).toString("base64url");
+  const expiresAt = new Date(now.getTime() + SESSION_TTL_MS);
+  const transaction = database.transaction(() => {
+    database
+      .prepare("DELETE FROM auth_rate_limits WHERE clientKey = ?")
+      .run(rateLimitKey);
+    database
+      .prepare("DELETE FROM auth_sessions WHERE expiresAt <= ?")
+      .run(now.toISOString());
+    database
+      .prepare(
+        "INSERT INTO auth_sessions (tokenHash, createdAt, expiresAt) VALUES (?, ?, ?)"
+      )
+      .run(hashSessionToken(token), now.toISOString(), expiresAt.toISOString());
+  });
+
+  transaction();
+
+  return { ok: true as const, token, expiresAt };
+}
+
+export function isValidAuthSession(token: string | undefined) {
+  if (!token) {
+    return false;
+  }
+
+  const session = getDb()
+    .prepare("SELECT expiresAt FROM auth_sessions WHERE tokenHash = ?")
+    .get(hashSessionToken(token)) as { expiresAt: string } | undefined;
+
+  return Boolean(session && new Date(session.expiresAt).getTime() > Date.now());
+}
+
+export function deleteAuthSession(token: string | undefined) {
+  if (!token) {
+    return;
+  }
+
+  getDb()
+    .prepare("DELETE FROM auth_sessions WHERE tokenHash = ?")
+    .run(hashSessionToken(token));
 }
 
 export function getPortfolioState(): PortfolioState {
