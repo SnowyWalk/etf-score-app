@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
 
-import { requireApiAuth } from "@/lib/auth/session";
 import { runPolicyBacktest } from "@/lib/backtest/engine";
 import { getConfiguredMarketProvider } from "@/lib/market-data/provider";
 import { getPortfolioState } from "@/lib/portfolio/repository";
@@ -120,9 +119,6 @@ function sortResults(a: OptimizerResult, b: OptimizerResult) {
 }
 
 export async function POST(request: Request) {
-  const unauthorized = requireApiAuth(request);
-  if (unauthorized) return unauthorized;
-
   try {
     const body = (await request.json()) as Record<string, unknown>;
     const basePolicy = getPortfolioState().policy;

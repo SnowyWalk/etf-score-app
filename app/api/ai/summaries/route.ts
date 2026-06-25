@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
 
-import { requireApiAuth } from "@/lib/auth/session";
 import {
   buildSummaryPrompt,
   extractOpenAIText,
@@ -51,9 +50,6 @@ function getOpenAIKey() {
 }
 
 export async function POST(request: Request) {
-  const unauthorized = requireApiAuth(request);
-  if (unauthorized) return unauthorized;
-
   const apiKey = getOpenAIKey();
 
   if (!apiKey) {

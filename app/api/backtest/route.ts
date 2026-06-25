@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 
 import { defaultEtfUniverse } from "@/data/etf-metadata";
-import { requireApiAuth } from "@/lib/auth/session";
 import { runBacktest, runPolicyBacktest } from "@/lib/backtest/engine";
 import { getConfiguredMarketProvider } from "@/lib/market-data/provider";
 import { getPortfolioState } from "@/lib/portfolio/repository";
@@ -43,9 +42,6 @@ function normalizeConfig(body: Partial<BacktestConfig>): BacktestConfig {
 }
 
 export async function POST(request: Request) {
-  const unauthorized = requireApiAuth(request);
-  if (unauthorized) return unauthorized;
-
   try {
     const body = await request.json();
     const config = normalizeConfig(body);

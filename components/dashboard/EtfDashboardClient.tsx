@@ -8,7 +8,6 @@ import {
   FileClock,
   Gauge,
   ListFilter,
-  LogOut,
   RefreshCw,
   Settings,
   ShieldCheck,
@@ -318,11 +317,6 @@ export function EtfDashboardClient({
     }
   }
 
-  async function logout() {
-    await fetch("/api/auth/logout", { method: "POST" });
-    window.location.replace("/login");
-  }
-
   return (
     <main className="min-h-screen bg-background">
       <div className="mx-auto flex w-full max-w-7xl flex-col gap-6 px-4 py-6 sm:px-6 lg:px-8">
@@ -373,10 +367,6 @@ export function EtfDashboardClient({
               >
                 <RefreshCw className="size-4" />
                 {isPending ? "갱신 중" : "데이터 갱신"}
-              </Button>
-              <Button type="button" variant="outline" size="sm" onClick={logout}>
-                <LogOut className="size-4" />
-                로그아웃
               </Button>
             </div>
           </div>

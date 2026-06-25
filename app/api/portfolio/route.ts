@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
 
-import { requireApiAuth } from "@/lib/auth/session";
 import {
   getPortfolioState,
   updateStrategyPolicy,
@@ -9,17 +8,11 @@ import {
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-export async function GET(request: Request) {
-  const unauthorized = requireApiAuth(request);
-  if (unauthorized) return unauthorized;
-
+export async function GET() {
   return NextResponse.json(getPortfolioState());
 }
 
 export async function PATCH(request: Request) {
-  const unauthorized = requireApiAuth(request);
-  if (unauthorized) return unauthorized;
-
   const body = await request.json();
 
   return NextResponse.json({
